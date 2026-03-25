@@ -222,6 +222,32 @@ def update_row(table_name, match_col, match_val, update_dict):
     st.error("Límite de Google Sheets superado. Espera 60 segundos por favor.")
     return False
 
+def delete_row(table_name, match_col, match_val):
+    import time
+    sheet = get_sheet()
+    if not sheet: return False
+    for attempt in range(3):
+        try:
+            ws = sheet.worksheet(table_name)
+            df = load_table(table_name)
+            if df.empty or match_col not in df.columns: return False
+            
+            matches = df.index[df[match_col].astype(str) == str(match_val)].tolist()
+            if not matches: return False
+            sheet_row = matches[0] + 2
+            
+            ws.delete_rows(sheet_row)
+            clear_cache(table_name)
+            return True
+        except Exception as e:
+            if "429" in str(e):
+                time.sleep(2)
+            else:
+                st.error(f"Error borrando en {table_name}: {e}")
+                return False
+    st.error("Límite de Google Sheets superado. Espera 60 segundos por favor.")
+    return False
+
 def generate_id(table_name, id_col):
     df = load_table(table_name)
     if df.empty or id_col not in df.columns: return 1
@@ -644,16 +670,32 @@ if is_ops(app_role):
     with tabs[5]:
         if is_admin(app_role):
             st.subheader("⚙️ Panel de Administración")
-            t1, t2 = st.tabs(["Marcas", "Usuarios"])
+            t1, t2, t3 = st.tabs(["Marcas", "Usuarios", "Eliminar Tareas"])
             with t1:
                 b_df = load_table('BRANDS')
                 if not b_df.empty: st.dataframe(b_df, hide_index=True)
-                with st.form("new_brand"):
-                    bn = st.text_input("Nombre de Marca")
-                    if st.form_submit_button("➕ Agregar Marca"):
-                        if bn:
-                            save_row('BRANDS', {'BRAND_ID': generate_id('BRANDS', 'BRAND_ID'), 'BRAND_NAME': bn, 'IS_ACTIVE': 'TRUE'})
-                            st.success("Marca agregada")
+                
+                c1, c2 = st.columns(2)
+                with c1:
+                    with st.form("new_brand"):
+                        bn = st.text_input("Nombre de Marca")
+                        if st.form_submit_button("➕ Agregar Marca"):
+                            if bn:
+                                save_row('BRANDS', {'BRAND_ID': generate_id('BRANDS', 'BRAND_ID'), 'BRAND_NAME': bn, 'IS_ACTIVE': 'TRUE'})
+                                st.success("Marca agregada")
+                with c2:
+                    if not b_df.empty:
+                        with st.form("del_brand"):
+                            br_to_del = st.selectbox("Marca a eliminar", b_df['BRAND_NAME'].tolist())
+                            confirm_br = st.checkbox("Confirmo que deseo ELIMINAR esta marca y sus datos asociados")
+                            if st.form_submit_button("🗑️ Eliminar Marca", type="primary"):
+                                if confirm_br:
+                                    br_id = b_df[b_df['BRAND_NAME'] == br_to_del]['BRAND_ID'].iloc[0]
+                                    if delete_row('BRANDS', 'BRAND_ID', br_id):
+                                        st.success(f"Marca {br_to_del} eliminada")
+                                        st.rerun()
+                                else:
+                                    st.warning("Debes marcar la casilla de confirmación")
             with t2:
                 u_df = load_table('USERS')
                 if not u_df.empty: st.dataframe(u_df, hide_index=True)
@@ -667,6 +709,25 @@ if is_ops(app_role):
                         if em and fn:
                             save_row('USERS', {'USER_ID': generate_id('USERS', 'USER_ID'), 'EMAIL': em, 'FULL_NAME': fn, 'ROLE': rol, 'POSITION': pos, 'IS_ACTIVE': 'TRUE', 'WEEKLY_HOURS': 40})
                             st.success("Usuario agregado")
+            with t3:
+                st.subheader("🗑️ Eliminar Tareas / Solicitudes")
+                req_df = get_requests()
+                if not req_df.empty:
+                    req_to_del_str = st.selectbox("Selecciona Solicitud para ELIMINAR", 
+                                               req_df.apply(lambda x: f"{x['REQUEST_ID']} - {x['TITLE']} ({x['BRAND_NAME']})", axis=1))
+                    req_id_to_del = int(req_to_del_str.split(" - ")[0])
+                    
+                    st.warning(f"⚠️ Estás a punto de eliminar permanentemente la tarea: **{req_to_del_str}**")
+                    confirm_task = st.checkbox("Confirmo que deseo ELIMINAR esta tarea definitivamente")
+                    if st.button("🗑️ Eliminar Tarea Permanentemente", type="primary"):
+                        if confirm_task:
+                            if delete_row('REQUESTS', 'REQUEST_ID', req_id_to_del):
+                                st.success("Tarea eliminada correctamente")
+                                st.rerun()
+                        else:
+                            st.error("Debes confirmar la eliminación")
+                else:
+                    st.info("No hay tareas para eliminar")
         else:
             st.warning("Acceso restringido a administradores.")
 else:
