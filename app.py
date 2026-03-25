@@ -1,0 +1,742 @@
+import streamlit as st
+import pandas as pd
+from datetime import date, timedelta, datetime
+import gspread
+from google.oauth2.service_account import Credentials
+import numpy as np
+import smtplib
+from email.mime.text import MIMEText
+from email.mime.multipart import MIMEMultipart
+
+def send_email_notification(to_email, subject, body):
+    try:
+        if "email" not in st.secrets: return False
+        sender_email = st.secrets["email"]["address"]
+        sender_password = st.secrets["email"]["password"]
+        msg = MIMEMultipart()
+        msg['From'] = f"Synapse Data Hub <{sender_email}>"
+        msg['To'] = str(to_email)
+        msg['Subject'] = str(subject)
+        msg.attach(MIMEText(str(body), 'html'))
+        server = smtplib.SMTP('smtp.gmail.com', 587)
+        server.starttls()
+        server.login(sender_email, sender_password)
+        server.send_message(msg)
+        server.quit()
+        return True
+    except Exception as e:
+        st.error(f"Error de envío SMTP (Revisa contraseñas y permisos): {str(e)}")
+        return False
+
+# --- CONFIGURACIÓN DE PÁGINA ---
+st.set_page_config(page_title="Synapse | Data Ops", page_icon="⚡", layout="wide")
+
+CATEGORIAS_DATA = [
+    "📈 Reporting & Performance",
+    "🕵️ Competitive Intelligence",
+    "⚙️ Data Engineering & Governance",
+    "📊 Dashboarding & Visualization",
+    "🔍 Strategic Research & Audiences",
+    "⚡ Ad-Hoc Analysis",
+    "🤖 Innovation & Training (IA)"
+]
+
+# --- CONFIGURACIÓN DE NIVEL DE SERVICIO (SLA ANTIGRAVITY) ---
+SLA_MAPPING = {
+    1: {"label": "Nivel 1: Consulta Puntual", "horas": 0.5, "dias_habiles": 1},
+    2: {"label": "Nivel 2: Reporte Básico",   "horas": 3.0, "dias_habiles": 2},
+    3: {"label": "Nivel 3: Informe Medio",    "horas": 8.0, "dias_habiles": 3},
+    4: {"label": "Nivel 4: Informe Complejo", "horas": 24.0, "dias_habiles": 5},
+    5: {"label": "Nivel 5: Dashboard Medio",  "horas": 45.0, "dias_habiles": 15},
+    6: {"label": "Nivel 6: Alta Estrategia",  "horas": 60.0, "dias_habiles": 20}
+}
+
+def calcular_entrega_antigravity(nivel_id):
+    config = SLA_MAPPING.get(nivel_id)
+    if not config: return datetime.now()
+    fecha_actual = datetime.now()
+    dias_a_sumar = int(config["dias_habiles"])
+    while dias_a_sumar > 0:
+        fecha_actual += timedelta(days=1)
+        if fecha_actual.weekday() < 5:
+            dias_a_sumar -= 1
+    return fecha_actual
+
+# --- DISEÑO MEJORADO (CSS PREMIUM) ---
+st.markdown("""
+<style>
+    @import url('https://fonts.googleapis.com/css2?family=Inter:wght@300;400;600;800&display=swap');
+    
+    html, body, [class*="css"] { font-family: 'Inter', sans-serif; }
+    
+    .title-banner {
+        background: linear-gradient(135deg, #111111 0%, #1a1a1a 100%);
+        padding: 40px 30px;
+        border-radius: 12px;
+        margin-bottom: 30px;
+        border-left: 6px solid #f97316;
+        box-shadow: 0 4px 20px rgba(0, 0, 0, 0.1);
+    }
+    .title-banner h1 {
+        margin: 0; font-size: 3.5rem; font-weight: 300;
+        letter-spacing: 2px; color: white; line-height: 1.1;
+    }
+    .title-banner p {
+        margin: 10px 0 0 0; font-size: 0.9rem;
+        letter-spacing: 4px; color: #aaa; text-transform: uppercase;
+    }
+    .highlight { color: #f97316; font-weight: 600; }
+    .brand-blue { color: #3b82f6; }
+    
+    div[data-testid="stTabs"] button {
+        font-size: 1.1rem; border-radius: 4px; padding: 10px 20px; transition: all 0.3s ease;
+    }
+    div[data-testid="stTabs"] button[aria-selected="true"] { color: #f97316 !important; }
+    div[data-testid="stTabs"] button[aria-selected="true"] > div { background-color: #f97316 !important; }
+    div[data-testid="metric-container"] {
+        border-radius: 12px; padding: 15px;
+        box-shadow: 0 4px 6px rgba(0, 0, 0, 0.1); border: 1px solid rgba(128, 128, 128, 0.2);
+    }
+    .streamlit-expanderHeader { border-radius: 8px; border: 1px solid rgba(128, 128, 128, 0.2); }
+</style>
+""", unsafe_allow_html=True)
+
+# --- CONEXIÓN A GOOGLE SHEETS ---
+SCOPES = ["https://www.googleapis.com/auth/spreadsheets"]
+
+@st.cache_resource
+def get_gsheets_client():
+    if "gcp_service_account" not in st.secrets: return None
+    try:
+        creds = Credentials.from_service_account_info(st.secrets["gcp_service_account"], scopes=SCOPES)
+        return gspread.authorize(creds)
+    except Exception as e:
+        st.error(f"Error autenticando: {e}")
+        return None
+
+@st.cache_resource
+def get_sheet():
+    client = get_gsheets_client()
+    if not client: return None
+    try:
+        url = st.secrets.get("google_sheets", {}).get("spreadsheet_url", "")
+        if not url: return None
+        return client.open_by_url(url)
+    except Exception as e:
+        st.error(f"Error abriendo Google Sheet: {e}")
+        return None
+
+@st.cache_data(ttl=60)
+def _load_users():
+    s = get_sheet()
+    try: return pd.DataFrame(s.worksheet('USERS').get_all_records(default_blank=np.nan))
+    except: return pd.DataFrame()
+
+@st.cache_data(ttl=60)
+def _load_brands():
+    s = get_sheet()
+    try: return pd.DataFrame(s.worksheet('BRANDS').get_all_records(default_blank=np.nan))
+    except: return pd.DataFrame()
+
+@st.cache_data(ttl=60)
+def _load_reqs():
+    s = get_sheet()
+    try: return pd.DataFrame(s.worksheet('REQUESTS').get_all_records(default_blank=np.nan))
+    except: return pd.DataFrame()
+
+@st.cache_data(ttl=60)
+def _load_weekly():
+    s = get_sheet()
+    try: return pd.DataFrame(s.worksheet('WEEKLY_ASSIGNMENTS').get_all_records(default_blank=np.nan))
+    except: return pd.DataFrame()
+
+@st.cache_data(ttl=60)
+def _load_types():
+    s = get_sheet()
+    try: return pd.DataFrame(s.worksheet('REQUEST_TYPES').get_all_records(default_blank=np.nan))
+    except: return pd.DataFrame()
+
+def load_table(t):
+    if t == 'USERS': return _load_users()
+    if t == 'BRANDS': return _load_brands()
+    if t == 'REQUESTS': return _load_reqs()
+    if t == 'WEEKLY_ASSIGNMENTS': return _load_weekly()
+    if t == 'REQUEST_TYPES': return _load_types()
+    return pd.DataFrame()
+
+def clear_cache(t=None):
+    if t == 'USERS': _load_users.clear()
+    elif t == 'BRANDS': _load_brands.clear()
+    elif t == 'REQUESTS': _load_reqs.clear()
+    elif t == 'WEEKLY_ASSIGNMENTS': _load_weekly.clear()
+    elif t == 'REQUEST_TYPES': _load_types.clear()
+    else: st.cache_data.clear()
+
+def save_row(table_name, row_dict):
+    sheet = get_sheet()
+    if not sheet: return False
+    try:
+        ws = sheet.worksheet(table_name)
+        headers = ws.row_values(1)
+        if not headers:
+            headers = list(row_dict.keys())
+            ws.append_row(headers)
+        row_values = [str(row_dict.get(h, "")) if not pd.isna(row_dict.get(h, "")) else "" for h in headers]
+        ws.append_row(row_values)
+        clear_cache(table_name)
+        return True
+    except Exception as e:
+        st.error(f"Error guardando en {table_name}: {e}")
+        return False
+
+def update_row(table_name, match_col, match_val, update_dict):
+    import time
+    sheet = get_sheet()
+    if not sheet: return False
+    for attempt in range(3):
+        try:
+            ws = sheet.worksheet(table_name)
+            headers = ws.row_values(1)
+            
+            df = load_table(table_name)
+            if df.empty or match_col not in df.columns: return False
+            
+            matches = df.index[df[match_col].astype(str) == str(match_val)].tolist()
+            if not matches: return False
+            sheet_row = matches[0] + 2
+            
+            for k, v in update_dict.items():
+                if k in headers:
+                    c_idx = headers.index(k) + 1
+                    val = "" if pd.isna(v) else str(v)
+                    ws.update_cell(sheet_row, c_idx, val)
+                    
+            clear_cache(table_name)
+            return True
+        except Exception as e:
+            if "429" in str(e):
+                time.sleep(2)
+            else:
+                st.error(f"Error actualizando en {table_name}: {e}")
+                return False
+    st.error("Límite de Google Sheets superado. Espera 60 segundos por favor.")
+    return False
+
+def generate_id(table_name, id_col):
+    df = load_table(table_name)
+    if df.empty or id_col not in df.columns: return 1
+    max_val = pd.to_numeric(df[id_col], errors='coerce').max()
+    return int(max_val) + 1 if not pd.isna(max_val) else 1
+
+# --- LÓGICA DE DATOS ---
+def get_users():
+    df = load_table('USERS')
+    if not df.empty and 'IS_ACTIVE' in df.columns:
+        df = df[df['IS_ACTIVE'].astype(str).str.upper().isin(['TRUE', '1', 'YES'])]
+    return df
+
+def get_brands():
+    df = load_table('BRANDS')
+    if not df.empty and 'IS_ACTIVE' in df.columns:
+        df = df[df['IS_ACTIVE'].astype(str).str.upper().isin(['TRUE', '1', 'YES'])]
+    return df
+
+def get_request_types():
+    df = load_table('REQUEST_TYPES')
+    if not df.empty and 'IS_ACTIVE' in df.columns:
+        df = df[df['IS_ACTIVE'].astype(str).str.upper().isin(['TRUE', '1', 'YES'])]
+    return df
+
+def get_team_members():
+    df = get_users()
+    if not df.empty:
+        valid_pos = ['DATA_LEAD', 'DATA LEAD', 'DATA_STRATEGIST', 'DATA STRATEGIST', 'DATA_ANALYST', 'DATA ANALYST', 'RESEARCH_EXECUTIVE', 'RESEARCH EXECUTIVE', 'DATA_RESEARCH', 'DATA RESEARCH', 'DATA_OPS', 'DATA OPS']
+        df = df[df['POSITION'].astype(str).str.upper().isin(valid_pos)]
+        df = df.sort_values(by=['POSITION', 'FULL_NAME'])
+    return df
+
+def get_requests():
+    req = load_table('REQUESTS')
+    users = get_users()
+    brands = get_brands()
+    if req.empty: return req
+    
+    if not brands.empty:
+        req = req.merge(brands[['BRAND_ID', 'BRAND_NAME']], on='BRAND_ID', how='left')
+    else: req['BRAND_NAME'] = 'N/A'
+    
+    if not users.empty:
+        req = req.merge(users[['USER_ID', 'FULL_NAME', 'EMAIL']], left_on='ASSIGNED_TO', right_on='USER_ID', how='left')
+        req.rename(columns={'FULL_NAME': 'ASSIGNED_TO_NAME', 'EMAIL': 'ASSIGNED_TO_EMAIL'}, inplace=True)
+        if 'REQUESTER_EMAIL' in req.columns and 'EMAIL' in users.columns:
+            u_dd = users[['EMAIL', 'FULL_NAME']].drop_duplicates('EMAIL')
+            req = req.merge(u_dd, left_on='REQUESTER_EMAIL', right_on='EMAIL', how='left')
+            req.rename(columns={'FULL_NAME': 'REQUESTER_NAME'}, inplace=True)
+    else: req['ASSIGNED_TO_NAME'] = 'Sin asignar'
+    
+    req['BRAND_NAME'] = req.get('BRAND_NAME', 'N/A')
+    req['ASSIGNED_TO_NAME'] = req.get('ASSIGNED_TO_NAME', 'Sin asignar').fillna('Sin asignar')
+    req['REQUESTER_NAME'] = req.get('REQUESTER_NAME', req.get('REQUESTER_EMAIL', 'Desconocido')).fillna(req.get('REQUESTER_EMAIL', 'Desconocido'))
+    
+    req['PRIORITY_SCORE'] = pd.to_numeric(req.get('PRIORITY_SCORE', 0), errors='coerce').fillna(0)
+    return req
+
+def get_pending_requests():
+    req = get_requests()
+    if req.empty: return req
+    pending = req[req['STATUS'].astype(str).str.upper() == 'PENDIENTE']
+    if pending.empty: return pending
+    pending['TOTAL_ESTIMATED_HOURS'] = pd.to_numeric(pending.get('TOTAL_ESTIMATED_HOURS', 40), errors='coerce').fillna(40)
+    return pending.sort_values('PRIORITY_SCORE', ascending=False)
+
+def get_my_assigned_tasks(email):
+    req = get_requests()
+    if req.empty or 'ASSIGNED_TO_EMAIL' not in req.columns: return pd.DataFrame()
+    my_tasks = req[req['ASSIGNED_TO_EMAIL'].astype(str).str.strip().str.upper() == email.strip().upper()]
+    
+    def get_days(d):
+        try: return (datetime.strptime(str(d), "%Y-%m-%d").date() - date.today()).days
+        except: return 0
+    
+    if not my_tasks.empty:
+        my_tasks['DAYS_TO_DEADLINE'] = my_tasks['DEADLINE'].apply(get_days)
+    return my_tasks
+
+def get_in_progress_tasks():
+    req = get_requests()
+    assigns = load_table('WEEKLY_ASSIGNMENTS')
+    if req.empty: return req
+    inp = req[req['STATUS'].astype(str).str.upper() == 'EN PROGRESO']
+    if inp.empty: return inp
+    
+    if not assigns.empty:
+        assigns['HOURS_ASSIGNED'] = pd.to_numeric(assigns['HOURS_ASSIGNED'], errors='coerce').fillna(0)
+        planned = assigns.groupby('REQUEST_ID')['HOURS_ASSIGNED'].sum().reset_index()
+        planned.rename(columns={'HOURS_ASSIGNED': 'HOURS_PLANNED'}, inplace=True)
+        inp = inp.merge(planned, on='REQUEST_ID', how='left')
+    else:
+        inp['HOURS_PLANNED'] = 0
+        
+    inp['TOTAL_ESTIMATED_HOURS'] = pd.to_numeric(inp.get('TOTAL_ESTIMATED_HOURS', 40), errors='coerce').fillna(40)
+    inp['HOURS_PLANNED'] = inp['HOURS_PLANNED'].fillna(0)
+    inp['HOURS_REMAINING'] = inp['TOTAL_ESTIMATED_HOURS'] - inp['HOURS_PLANNED']
+    return inp.sort_values('PRIORITY_SCORE', ascending=False)
+
+def get_task_weekly_plan(request_id):
+    wa = load_table('WEEKLY_ASSIGNMENTS')
+    usr = load_table('USERS')
+    if wa.empty: return pd.DataFrame()
+    
+    wa = wa[wa['REQUEST_ID'].astype(str) == str(request_id)]
+    if not wa.empty and not usr.empty:
+        wa = wa.merge(usr[['USER_ID', 'FULL_NAME']], on='USER_ID', how='left')
+    else:
+        wa['FULL_NAME'] = 'Desconocido'
+    return wa.sort_values('WEEK_START')
+
+def get_workload_by_week(week_start):
+    wa = load_table('WEEKLY_ASSIGNMENTS')
+    usr = get_team_members()
+    if usr.empty: return pd.DataFrame()
+    
+    if not wa.empty:
+        wa = wa[wa['WEEK_START'].astype(str) == str(week_start)]
+        if not wa.empty:
+            agg = wa.groupby('USER_ID')[['HOURS_ASSIGNED', 'HOURS_MON', 'HOURS_TUE', 'HOURS_WED', 'HOURS_THU', 'HOURS_FRI']].sum().reset_index()
+            usr = usr.merge(agg, on='USER_ID', how='left')
+        else:
+            for c in ['HOURS_ASSIGNED', 'HOURS_MON', 'HOURS_TUE', 'HOURS_WED', 'HOURS_THU', 'HOURS_FRI']: usr[c] = 0
+    else:
+        for c in ['HOURS_ASSIGNED', 'HOURS_MON', 'HOURS_TUE', 'HOURS_WED', 'HOURS_THU', 'HOURS_FRI']: usr[c] = 0
+        
+    return usr.fillna(0).sort_values('FULL_NAME')
+
+def get_tasks_needing_review():
+    req = get_requests()
+    if req.empty: return req
+    # Mostrar como alerta tareas bloqueadas o esperando info
+    df = req[req['STATUS'].astype(str).str.upper().isin(['BLOQUEADO', 'ESPERANDO INFO'])]
+    if not df.empty:
+        df['ALERT_STATUS'] = 'URGENT'
+        df['PERCENT_TIME_USED'] = 100
+    return df
+
+def get_current_week_start():
+    today = date.today()
+    return today - timedelta(days=today.weekday())
+
+def get_week_options(num_weeks=8):
+    current = get_current_week_start()
+    return [(current + timedelta(weeks=i), f"Sem {i+1}: {(current + timedelta(weeks=i)).strftime('%d/%m')} - {(current + timedelta(weeks=i) + timedelta(days=4)).strftime('%d/%m')}") for i in range(num_weeks)]
+
+# --- ACCIONES ---
+def insert_request(data):
+    data['REQUEST_ID'] = generate_id('REQUESTS', 'REQUEST_ID')
+    data['STATUS'] = 'PENDIENTE'
+    data['UPDATED_AT'] = str(datetime.now())
+    return save_row('REQUESTS', data)
+
+def add_weekly_assignment(request_id, user_id, week_start, hours, created_by, notes, hw):
+    data = {
+        'ASSIGNMENT_ID': generate_id('WEEKLY_ASSIGNMENTS', 'ASSIGNMENT_ID'),
+        'REQUEST_ID': request_id, 'USER_ID': user_id, 'WEEK_START': str(week_start),
+        'HOURS_ASSIGNED': hours, **hw, 'CREATED_BY': created_by, 'NOTES': notes
+    }
+    return save_row('WEEKLY_ASSIGNMENTS', data)
+
+def mark_task_complete(request_id):
+    return update_row('REQUESTS', 'REQUEST_ID', request_id, {
+        'STATUS': 'COMPLETADO', 'COMPLETED_AT': str(datetime.now()), 'UPDATED_AT': str(datetime.now())
+    })
+
+# --- SESIÓN DE USUARIO (LOGIN) ---
+if "user_email" not in st.session_state:
+    # Logo
+    st.image("assets/new_logo.png", use_container_width=True)
+    c1, c2, c3 = st.columns([1,2,1])
+    with c2:
+        st.info("👋 Bienvenido a Synapse. Por favor, ingresa tu correo para continuar.")
+        email_input = st.text_input("Correo electrónico", placeholder="ejemplo@lobueno.com")
+        if st.button("Ingresar", type="primary", use_container_width=True):
+            if email_input:
+                st.session_state.user_email = email_input.strip()
+                clear_cache()
+                st.rerun()
+            else:
+                st.error("Por favor, ingresa un correo válido.")
+    st.stop()
+
+user_email = st.session_state.user_email
+users_df = load_table('USERS')
+if not users_df.empty:
+    user_match = users_df[users_df['EMAIL'].astype(str).str.strip().str.upper() == user_email.strip().upper()]
+    if not user_match.empty:
+        app_role = str(user_match.iloc[0].get('ROLE', 'VIEWER')).strip().upper()
+        if not app_role: app_role = 'VIEWER'
+        user_name = str(user_match.iloc[0].get('FULL_NAME', user_email)).strip()
+        if not user_name: user_name = user_email
+    else:
+        app_role, user_name = 'VIEWER', user_email
+else:
+    app_role, user_name = 'VIEWER', user_email
+
+def is_admin(r): return r.upper() == 'ADMIN'
+def is_ops(r): return r.upper() in ['ADMIN', 'OPS', 'DATA ANALYST', 'DATA_ANALYST', 'RESEARCH EXECUTIVE', 'RESEARCH_EXECUTIVE', 'DATA LEAD', 'DATA_LEAD']
+
+with st.sidebar:
+    st.markdown(f"### 👤 {user_name}")
+    st.markdown(f"**Rol:** `{app_role}`")
+    if st.button("🚪 Cerrar Sesión", use_container_width=True):
+        del st.session_state.user_email
+        st.rerun()
+
+# Logo
+st.image("assets/new_logo.png", use_container_width=True)
+
+# --- UI PRINCIPAL ---
+if is_ops(app_role):
+    tabs = st.tabs(["📝 Nueva", "📊 Dashboard", "🎯 Mis Tareas", "👥 Asignar", "📋 Equipo", "⚙️ Admin"])
+    
+    with tabs[0]:
+        st.subheader("Crear Nueva Solicitud")
+        col1, col2 = st.columns(2)
+        with col1:
+            req_type = st.selectbox("Tipo de Tarea Genérica", CATEGORIAS_DATA, key="o_type")
+            title = st.text_input("Detalle de la tarea (ej: Informe Terpel Julio) *", key="o_tit")
+            b_df = get_brands()
+            brand = st.selectbox("Marca", ["Seleccionar..."] + b_df['BRAND_NAME'].tolist() if not b_df.empty else ["Sin marcas"], key="o_brnd")
+        with col2:
+            sla_options = {k: v["label"] for k, v in SLA_MAPPING.items()}
+            sla_level = st.selectbox("Nivel de Servicio (SLA)", options=list(sla_options.keys()), format_func=lambda x: sla_options[x], index=1, key="o_sla")
+            
+            calculated_deadline = calcular_entrega_antigravity(sla_level).date()
+            calculated_hours = SLA_MAPPING[sla_level]["horas"]
+            
+            if is_admin(app_role):
+                deadline = st.date_input("Fecha límite (Override Admin)", value=calculated_deadline)
+                est_hrs = st.number_input("Horas estimadas (Total)", value=float(calculated_hours))
+            else:
+                st.info(f"⏱️ **Basado en la complejidad de Nivel {sla_level}, tu entrega estimada es el {calculated_deadline.strftime('%d/%m/%Y')} (Esfuerzo: {calculated_hours} horas).**")
+                deadline = calculated_deadline
+                est_hrs = calculated_hours
+        
+        st.divider()
+        context = st.text_area("Contexto y Objetivo *", key="o_ctx")
+        kpis = st.text_area("KPIs esperados *", key="o_kpi")
+        usage = st.text_area("Uso del Dato *", key="o_use")
+        
+        if st.button("✅ Enviar Solicitud", type="primary", use_container_width=True, key="o_btn"):
+            if not all([title, context, kpis, usage]) or brand == "Seleccionar...":
+                st.error("❌ Completa todos los campos obligatorios")
+            else:
+                b_id = int(b_df[b_df['BRAND_NAME'] == brand]['BRAND_ID'].iloc[0]) if not b_df.empty else 1
+                data = {
+                    "TITLE": title, "REQUESTER_EMAIL": user_email, "BRAND_ID": b_id,
+                    "REQUEST_TYPE": req_type, "BUSINESS_CONTEXT": context, "EXPECTED_KPIS": kpis,
+                    "DATA_USAGE": usage, "DEADLINE": str(deadline), "TOTAL_ESTIMATED_HOURS": float(est_hrs),
+                    "EFFORT_LEVEL": sla_level, "SLA_EXPECTED": SLA_MAPPING[sla_level]["label"],
+                    "PRIORITY_SCORE": 6.0
+                }
+                if insert_request(data):
+                    st.success("✅ Solicitud enviada exitosamente")
+    
+    with tabs[1]:
+        st.subheader("📊 Dashboard")
+        df = get_requests()
+        if not df.empty:
+            col1, col2, col3, col4 = st.columns(4)
+            col1.metric("Total", len(df))
+            col2.metric("Pendientes", len(df[df['STATUS'].astype(str).str.upper() == 'PENDIENTE']))
+            col3.metric("En Progreso", len(df[df['STATUS'].astype(str).str.upper() == 'EN PROGRESO']))
+            col4.metric("Completados", len(df[df['STATUS'].astype(str).str.upper() == 'COMPLETADO']))
+            st.dataframe(df[['REQUEST_ID', 'TITLE', 'REQUESTER_NAME', 'TOTAL_ESTIMATED_HOURS', 'BRAND_NAME', 'STATUS', 'DEADLINE', 'ASSIGNED_TO_NAME', 'PRIORITY_SCORE']].sort_values('PRIORITY_SCORE', ascending=False), use_container_width=True, hide_index=True)
+            
+            st.divider()
+            st.subheader("🛠️ Gestionar Solicitudes Activas")
+            reqs = df[df['STATUS'].astype(str).str.upper() != 'COMPLETADO']
+            if not reqs.empty:
+                sel_req = st.selectbox("Selecciona una Solicitud", reqs.apply(lambda x: f"{x['REQUEST_ID']} - {x['TITLE']} ({x['STATUS']})", axis=1))
+                req_idx = int(sel_req.split(" - ")[0])
+                req_data = reqs[reqs['REQUEST_ID'] == req_idx].iloc[0]
+                
+                c1, c2 = st.columns(2)
+                with c1:
+                    with st.form(f"ask_info_{req_idx}"):
+                        st.markdown("**1. Solicitar Aclaración al Creador**")
+                        fb = st.text_area("¿Qué información hace falta?", key="fbk")
+                        if st.form_submit_button("Pedir Información al Creador", use_container_width=True):
+                            if fb:
+                                update_row('REQUESTS', 'REQUEST_ID', req_idx, {'STATUS': 'ESPERANDO INFO', 'ADMIN_FEEDBACK': fb, 'UPDATED_AT': str(datetime.now())})
+                                e_target = req_data.get('REQUESTER_EMAIL', '')
+                                if pd.isna(e_target): e_target = ''
+                                send_email_notification(e_target, f"Acción Requerida: {req_data['TITLE']}", f"El equipo de Datos requiere más detalles para avanzar con tu solicitud <b>{req_data['TITLE']}</b>.<br><br><b>Mensaje de Ops:</b> {fb}<br><br>Por favor, ingresa a la pestaña 'Mis Solicitudes' en Synapse para responder.")
+                                st.success("Aclaración solicitada con éxito.")
+                                st.rerun()
+                with c2:
+                    with st.form(f"resched_{req_idx}"):
+                        st.markdown("**2. Reprogramar Fecha de Entrega**")
+                        try: prev_date = datetime.strptime(str(req_data['DEADLINE']), "%Y-%m-%d").date()
+                        except: prev_date = date.today()
+                        new_date = st.date_input("Nueva Fecha Oficial", value=prev_date, key="ndate")
+                        if st.form_submit_button("Actualizar Fecha de Entrega", use_container_width=True):
+                            if str(new_date) != str(prev_date):
+                                update_row('REQUESTS', 'REQUEST_ID', req_idx, {'DEADLINE': str(new_date), 'UPDATED_AT': str(datetime.now())})
+                                e_target = req_data.get('REQUESTER_EMAIL', '')
+                                if pd.isna(e_target): e_target = ''
+                                send_email_notification(e_target, f"Fecha Reprogramada: {req_data['TITLE']}", f"Te informamos que la fecha de entrega oficial de <b>{req_data['TITLE']}</b> ha sido reestimada al <b>{new_date}</b>.")
+                                st.success("Fecha y SLA actualizados.")
+                                st.rerun()
+                st.divider()
+                st.markdown("**3. Cierre de Solicitud (Finalización)**")
+                if st.button("🏁 Marcar Solicitud como COMPLETADA", type="primary", use_container_width=True):
+                    if update_row('REQUESTS', 'REQUEST_ID', req_idx, {'STATUS': 'COMPLETADO', 'UPDATED_AT': str(datetime.now())}):
+                        e_target = req_data.get('REQUESTER_EMAIL', '')
+                        if pd.isna(e_target): e_target = ''
+                        send_email_notification(e_target, f"Solicitud Completada: {req_data['TITLE']}", f"¡Buenas noticias!<br>Tu solicitud <b>{req_data['TITLE']}</b> ha sido finalizada con éxito por el equipo de Datos.<br><br>Gracias por utilizar Synapse.")
+                        st.success("Tarea cerrada de forma definitiva.")
+                        st.rerun()
+        else:
+            st.info("No hay solicitudes registradas.")
+            
+    with tabs[2]:
+        st.subheader("🎯 Mis Tareas Asignadas")
+        my_tasks = get_my_assigned_tasks(user_email)
+        if not my_tasks.empty:
+            for _, task in my_tasks.iterrows():
+                days_left = task.get('DAYS_TO_DEADLINE', 0)
+                urg = "🔴" if days_left < 0 else "🟡" if days_left <= 2 else "🟢"
+                with st.expander(f"{urg} {task['TITLE']} | {days_left} días restantes"):
+                    c1, c2 = st.columns(2)
+                    c1.write(f"**Marca:** {task.get('BRAND_NAME', 'N/A')}")
+                    c1.write(f"**Solicitante:** {task.get('REQUESTER_NAME', 'N/A')}")
+                    c2.write(f"**Deadline:** {task['DEADLINE']}")
+                    c2.write(f"**Estado:** {task['STATUS']}")
+                    st.info(f"**Contexto y Objetivo:** {task['BUSINESS_CONTEXT']}")
+                    st.write(f"**📈 KPIs Esperados:** {task.get('EXPECTED_KPIS', 'N/A')}")
+                    st.write(f"**📅 Uso del Dato:** {task.get('DATA_USAGE', 'N/A')}")
+                    if st.button("✅ Marcar como Completado", key=f"c_{task['REQUEST_ID']}"):
+                        if mark_task_complete(task['REQUEST_ID']):
+                            st.success("¡Tarea completada!")
+                            st.rerun()
+        else:
+            st.success("✅ No tienes tareas pendientes")
+            
+    with tabs[3]:
+        st.subheader("👥 Asignar Tareas")
+        st.caption("Planificación y asignación semanal de pendientes.")
+        week_options = get_week_options(8)
+        sel_wk_idx = st.selectbox("📅 Semana", range(len(week_options)), format_func=lambda x: week_options[x][1])
+        sel_week = week_options[sel_wk_idx][0]
+        
+        pending_df = get_pending_requests()
+        if not pending_df.empty:
+            tgt_req = st.selectbox("📌 Solicitud Pendiente", pending_df.apply(lambda x: f"{x['REQUEST_ID']} - {x['TITLE']}", axis=1).tolist())
+            req_idx = int(tgt_req.split(" - ")[0])
+            r_data = pending_df[pending_df['REQUEST_ID'] == req_idx].iloc[0]
+            
+            with st.expander("👁️ Detalles Completos de la Solicitud", expanded=True):
+                st.write(f"**Solicitante:** {r_data.get('REQUESTER_NAME', '')}")
+                st.write(f"**Contexto y Objetivo:** {r_data.get('BUSINESS_CONTEXT', '')}")
+                st.write(f"**KPIs Esperados:** {r_data.get('EXPECTED_KPIS', '')}")
+                st.write(f"**Uso del Dato:** {r_data.get('DATA_USAGE', '')}")
+                st.info(f"**SLA:** {r_data.get('SLA_EXPECTED', '')} | **Deadline Oficial:** {r_data.get('DEADLINE', '')} | **Esfuerzo:** {r_data.get('TOTAL_ESTIMATED_HOURS', '')}h")
+                
+            with st.form("assign_new"):
+                c1, c2 = st.columns(2)
+                team_df = get_team_members()
+                tgt_usr = c1.selectbox("Asignar a", team_df['FULL_NAME'].tolist() if not team_df.empty else [])
+                
+                hrs = c2.number_input("Horas a asignar esta semana", 1, 40, 8)
+                nts = c2.text_input("Notas de asignación")
+                
+                st.write("**Distribución Diaria (Opcional):**")
+                d1, d2, d3, d4, d5 = st.columns(5)
+                hw = {
+                    'HOURS_MON': d1.number_input("L", 0, 8, 0), 'HOURS_TUE': d2.number_input("M", 0, 8, 0),
+                    'HOURS_WED': d3.number_input("X", 0, 8, 0), 'HOURS_THU': d4.number_input("J", 0, 8, 0),
+                    'HOURS_FRI': d5.number_input("V", 0, 8, 0)
+                }
+                
+                if st.form_submit_button("✅ Asignar y Notificar", use_container_width=True):
+                    req_id = int(tgt_req.split(" - ")[0])
+                    u_id = int(team_df[team_df['FULL_NAME'] == tgt_usr]['USER_ID'].iloc[0])
+                    update_row('REQUESTS', 'REQUEST_ID', req_id, {'STATUS': 'EN PROGRESO', 'ASSIGNED_TO': u_id, 'UPDATED_AT': str(datetime.now())})
+                    if add_weekly_assignment(req_id, u_id, sel_week, hrs, user_email, nts, hw):
+                        usr_email = team_df[team_df['FULL_NAME'] == tgt_usr]['EMAIL'].iloc[0]
+                        send_email_notification(usr_email, f"Nueva Asignación: {r_data['TITLE']}", f"Hola {tgt_usr},<br><br>Se te ha asignado la tarea <b>{r_data['TITLE']}</b> (Deadline: {r_data['DEADLINE']}).<br>Horas asignadas esta semana: {hrs}h.<br><br><b>Contexto:</b> {r_data.get('BUSINESS_CONTEXT', '')}<br><br>Revisa tu pestaña 'Mis Tareas' en Synapse.")
+                        send_email_notification(r_data.get('REQUESTER_EMAIL', ''), f"Tarea Asignada: {r_data['TITLE']}", f"Tu solicitud ha sido aprobada y asignada al analista <b>{tgt_usr}</b>.<br>Se encuentra formalmente EN PROGRESO.")
+                        st.success("Asignación guardada y notificada a los involucrados.")
+                        st.rerun()
+        else:
+            st.info("No hay tareas pendientes por asignar.")
+
+    with tabs[4]:
+        st.subheader("📋 Carga del Equipo")
+        wk_df = get_workload_by_week(sel_week)
+        if not wk_df.empty:
+            all_reqs = get_requests()
+            for _, r in wk_df.iterrows():
+                h_used = pd.to_numeric(r['HOURS_ASSIGNED'], errors='coerce')
+                h_used = int(h_used) if not pd.isna(h_used) else 0
+                pct = min(h_used / 40.0, 1.0)
+                st.write(f"**{r['FULL_NAME']}** - {h_used}h / 40h asignadas")
+                st.progress(pct)
+                
+                user_id = r['USER_ID']
+                if not all_reqs.empty:
+                    u_reqs = all_reqs[(all_reqs['ASSIGNED_TO'] == user_id) & (all_reqs['STATUS'].astype(str).str.upper() == 'EN PROGRESO')]
+                    if not u_reqs.empty:
+                        with st.expander(f"Ver {len(u_reqs)} Tareas Activas y Progreso Esperado"):
+                            for _, ur in u_reqs.iterrows():
+                                try:
+                                    t_start = pd.to_datetime(ur.get('UPDATED_AT')).date()
+                                    t_end = pd.to_datetime(ur.get('DEADLINE')).date()
+                                    t_days_tot = (t_end - t_start).days if (t_end - t_start).days > 0 else 1
+                                    t_elap = (date.today() - t_start).days
+                                    t_pct = min(max(t_elap / t_days_tot, 0.0), 1.0)
+                                except:
+                                    t_pct = 0.0
+                                st.markdown(f"🔹 **{ur['TITLE']}** (Entrega: {ur['DEADLINE']})")
+                                st.progress(t_pct)
+                                st.caption(f"Avance esperado por desgaste de tiempo: {int(t_pct*100)}%")
+            st.dataframe(wk_df[['FULL_NAME', 'HOURS_MON', 'HOURS_TUE', 'HOURS_WED', 'HOURS_THU', 'HOURS_FRI', 'HOURS_ASSIGNED']], hide_index=True)
+            
+    with tabs[5]:
+        if is_admin(app_role):
+            st.subheader("⚙️ Panel de Administración")
+            t1, t2 = st.tabs(["Marcas", "Usuarios"])
+            with t1:
+                b_df = load_table('BRANDS')
+                if not b_df.empty: st.dataframe(b_df, hide_index=True)
+                with st.form("new_brand"):
+                    bn = st.text_input("Nombre de Marca")
+                    if st.form_submit_button("➕ Agregar Marca"):
+                        if bn:
+                            save_row('BRANDS', {'BRAND_ID': generate_id('BRANDS', 'BRAND_ID'), 'BRAND_NAME': bn, 'IS_ACTIVE': 'TRUE'})
+                            st.success("Marca agregada")
+            with t2:
+                u_df = load_table('USERS')
+                if not u_df.empty: st.dataframe(u_df, hide_index=True)
+                with st.form("new_user"):
+                    c1, c2 = st.columns(2)
+                    em = c1.text_input("Email")
+                    fn = c2.text_input("Nombre Completo")
+                    rol = st.selectbox("Rol", ["VIEWER", "OPS", "ADMIN", "DATA ANALYST", "RESEARCH EXECUTIVE"])
+                    pos = st.selectbox("Posición", ["DATA_LEAD", "DATA_STRATEGIST", "DATA_ANALYST", "RESEARCH_EXECUTIVE", "DATA_RESEARCH", "DATA_OPS", "EXTERNAL"])
+                    if st.form_submit_button("➕ Agregar Usuario"):
+                        if em and fn:
+                            save_row('USERS', {'USER_ID': generate_id('USERS', 'USER_ID'), 'EMAIL': em, 'FULL_NAME': fn, 'ROLE': rol, 'POSITION': pos, 'IS_ACTIVE': 'TRUE', 'WEEKLY_HOURS': 40})
+                            st.success("Usuario agregado")
+        else:
+            st.warning("Acceso restringido a administradores.")
+else:
+    # Vista VIEWERS
+    tabs = st.tabs(["📝 Nueva Solicitud", "📋 Mis Solicitudes"])
+    with tabs[0]:
+        st.subheader("Crear Nueva Solicitud")
+        col1, col2 = st.columns(2)
+        with col1:
+            req_type = st.selectbox("Tipo de Tarea Genérica", CATEGORIAS_DATA, key="v_type")
+            title = st.text_input("Detalle de la tarea (ej: Informe Terpel Julio) *", key="v_tit")
+            b_df = get_brands()
+            brand = st.selectbox("Marca", ["Seleccionar..."] + b_df['BRAND_NAME'].tolist() if not b_df.empty else ["Sin marcas"], key="v_brd")
+        with col2:
+            sla_options = {k: v["label"] for k, v in SLA_MAPPING.items()}
+            sla_level = st.selectbox("Nivel de Servicio (SLA)", options=list(sla_options.keys()), format_func=lambda x: sla_options[x], index=1, key="v_sla")
+            
+            calculated_deadline = calcular_entrega_antigravity(sla_level).date()
+            calculated_hours = SLA_MAPPING[sla_level]["horas"]
+            st.info(f"⏱️ **Basado en la complejidad de Nivel {sla_level}, tu entrega estimada es el {calculated_deadline.strftime('%d/%m/%Y')} (Esfuerzo: {calculated_hours} horas).**")
+            deadline = calculated_deadline
+            
+        st.divider()
+        context = st.text_area("Contexto y Objetivo *", key="v_ctx")
+        kpis = st.text_area("KPIs esperados *", key="v_kpi")
+        usage = st.text_area("Uso del Dato *", key="v_use")
+        
+        if st.button("✅ Enviar Solicitud", type="primary", use_container_width=True, key="v_btn"):
+            if not all([title, context, kpis, usage]) or brand == "Seleccionar...":
+                st.error("❌ Completa todos los campos")
+            else:
+                b_id = int(b_df[b_df['BRAND_NAME'] == brand]['BRAND_ID'].iloc[0]) if not b_df.empty else 1
+                data = {
+                    "TITLE": title, "REQUESTER_EMAIL": user_email, "BRAND_ID": b_id,
+                    "REQUEST_TYPE": req_type, "BUSINESS_CONTEXT": context, "EXPECTED_KPIS": kpis, 
+                    "DATA_USAGE": usage, "DEADLINE": str(deadline),
+                    "TOTAL_ESTIMATED_HOURS": float(calculated_hours),
+                    "EFFORT_LEVEL": sla_level, "SLA_EXPECTED": SLA_MAPPING[sla_level]["label"],
+                    "PRIORITY_SCORE": 6.0
+                }
+                if insert_request(data):
+                    send_email_notification(
+                        user_email, 
+                        f"Solicitud Recibida - {title}", 
+                        f"Hola, hemos recibido tu solicitud <b>{title}</b>. Basado en su SLA ({SLA_MAPPING[sla_level]['label']}), la entrega estimada es para el {deadline}.<br><br>Atentamente,<br>Synapse Data Ops"
+                    )
+                    send_email_notification(
+                        "datahublobueno@gmail.com",
+                        f"NUEVA SOLICITUD: {title}",
+                        f"El usuario {user_email} ha creado una nueva solicitud de nivel {SLA_MAPPING[sla_level]['label']}.<br>Revisa el dashboard de Synapse para asignar recursos."
+                    )
+                    st.success("✅ Solicitud enviada exitosamente")
+    
+    with tabs[1]:
+        st.subheader("📋 Mis Solicitudes")
+        req = get_requests()
+        if not req.empty:
+            my_req = req[req['REQUESTER_EMAIL'].astype(str).str.upper() == user_email.upper()]
+            for _, r in my_req.iterrows():
+                with st.expander(f"📌 {r['TITLE']} - {r['STATUS']}"):
+                    st.write(f"**Asignado a:** {r.get('ASSIGNED_TO_NAME', 'Pendiente')}")
+                    st.write(f"**Deadline:** {r.get('DEADLINE', 'N/A')}")
+                    if str(r.get('STATUS', '')).upper() == 'ESPERANDO INFO':
+                        st.warning(f"**Admin solicita aclaración:** {r.get('ADMIN_FEEDBACK', 'Por favor brinda más contexto/datos sobre esta solicitud.')}")
+                        with st.form(f"v_upd_{r['REQUEST_ID']}"):
+                            extra = st.text_area("Añade la información solicitada o enlaces de Drive:")
+                            if st.form_submit_button("Enviar Aclaración", use_container_width=True):
+                                if extra:
+                                    n_ctx = str(r.get('BUSINESS_CONTEXT', '')) + f"\n\n[ACLARACIÓN {datetime.now().strftime('%Y-%m-%d')}]: {extra}"
+                                    update_row('REQUESTS', 'REQUEST_ID', r['REQUEST_ID'], {'STATUS': 'PENDIENTE', 'BUSINESS_CONTEXT': n_ctx, 'UPDATED_AT': str(datetime.now())})
+                                    send_email_notification('datahublobueno@gmail.com', f"Aclaración Recibida: {r['TITLE']}", f"El usuario {user_email} ha respondido a la solicitud de info en la tarea: <b>{r['TITLE']}</b>.<br><br><b>Información Añadida:</b><br>{extra}")
+                                    st.success("Aclaración enviada al equipo.")
+                                    st.rerun()
