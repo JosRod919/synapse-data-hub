@@ -4,28 +4,28 @@ from datetime import date, timedelta, datetime
 import gspread
 from google.oauth2.service_account import Credentials
 import numpy as np
-import smtplib
-from email.mime.text import MIMEText
-from email.mime.multipart import MIMEMultipart
+from sendgrid import SendGridAPIClient
+from sendgrid.helpers.mail import Mail, Email, To
 
 def send_email_notification(to_email, subject, body):
     try:
-        if "email" not in st.secrets: return False
-        sender_email = st.secrets["email"]["address"]
-        sender_password = st.secrets["email"]["password"]
-        msg = MIMEMultipart()
-        msg['From'] = f"Synapse Data Hub <{sender_email}>"
-        msg['To'] = str(to_email)
-        msg['Subject'] = str(subject)
-        msg.attach(MIMEText(str(body), 'html'))
-        server = smtplib.SMTP('smtp.gmail.com', 587)
-        server.starttls()
-        server.login(sender_email, sender_password)
-        server.send_message(msg)
-        server.quit()
-        return True
+        if "sendgrid" not in st.secrets:
+            return False
+        sg = SendGridAPIClient(api_key=st.secrets["sendgrid"]["api_key"])
+        from_email = Email(
+            st.secrets["sendgrid"]["from_email"],
+            st.secrets["sendgrid"].get("from_name", "Synapse Data Hub")
+        )
+        message = Mail(
+            from_email=from_email,
+            to_emails=To(str(to_email)),
+            subject=str(subject),
+            html_content=str(body)
+        )
+        response = sg.send(message)
+        return response.status_code in [200, 201, 202]
     except Exception as e:
-        st.error(f"Error de envío SMTP (Revisa contraseñas y permisos): {str(e)}")
+        st.error(f"Error enviando email (SendGrid): {str(e)}")
         return False
 
 # --- CONFIGURACIÓN DE PÁGINA ---
