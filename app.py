@@ -10,6 +10,8 @@ from sendgrid.helpers.mail import Mail, Email, To
 def send_email_notification(to_email, subject, body):
     try:
         if "sendgrid" not in st.secrets:
+            st.error("Error: Configuración de 'sendgrid' no encontrada en st.secrets.")
+            import time; time.sleep(3)
             return False
         sg = SendGridAPIClient(api_key=st.secrets["sendgrid"]["api_key"])
         from_email = Email(
@@ -26,6 +28,7 @@ def send_email_notification(to_email, subject, body):
         return response.status_code in [200, 201, 202]
     except Exception as e:
         st.error(f"Error enviando email (SendGrid): {str(e)}")
+        import time; time.sleep(3)
         return False
 
 # --- CONFIGURACIÓN DE PÁGINA ---
@@ -504,6 +507,23 @@ if is_ops(app_role):
                     "PRIORITY_SCORE": 6.0
                 }
                 if insert_request(data):
+                    req_details = f"""
+                    Hola, hemos recibido tu solicitud <b>{title}</b>.<br><br>
+                    <b>Detalles de la solicitud:</b><br>
+                    <ul>
+                        <li><b>Marca:</b> {brand}</li>
+                        <li><b>Tipo:</b> {req_type}</li>
+                        <li><b>Nivel SLA:</b> {SLA_MAPPING[sla_level]['label']}</li>
+                        <li><b>Contexto:</b> {context}</li>
+                        <li><b>KPIs:</b> {kpis}</li>
+                        <li><b>Uso del Dato:</b> {usage}</li>
+                    </ul>
+                    <br>
+                    Basado en la complejidad, la entrega estimada es para el <b>{deadline}</b>.<br>
+                    El estado actual es: <b>PENDIENTE</b>.<br><br>
+                    Atentamente,<br>Synapse Data Ops
+                    """
+                    send_email_notification(user_email, f"Solicitud Recibida - {title}", req_details)
                     st.success("✅ Solicitud enviada exitosamente")
     
     with tabs[1]:
@@ -630,7 +650,7 @@ if is_ops(app_role):
                     if add_weekly_assignment(req_id, u_id, sel_week, hrs, user_email, nts, hw):
                         usr_email = team_df[team_df['FULL_NAME'] == tgt_usr]['EMAIL'].iloc[0]
                         send_email_notification(usr_email, f"Nueva Asignación: {r_data['TITLE']}", f"Hola {tgt_usr},<br><br>Se te ha asignado la tarea <b>{r_data['TITLE']}</b> (Deadline: {r_data['DEADLINE']}).<br>Horas asignadas esta semana: {hrs}h.<br><br><b>Contexto:</b> {r_data.get('BUSINESS_CONTEXT', '')}<br><br>Revisa tu pestaña 'Mis Tareas' en Synapse.")
-                        send_email_notification(r_data.get('REQUESTER_EMAIL', ''), f"Tarea Asignada: {r_data['TITLE']}", f"Tu solicitud ha sido aprobada y asignada al analista <b>{tgt_usr}</b>.<br>Se encuentra formalmente EN PROGRESO.")
+                        send_email_notification(r_data.get('REQUESTER_EMAIL', ''), f"Tarea Asignada: {r_data['TITLE']}", f"Tu solicitud <b>{r_data['TITLE']}</b> ha sido aprobada y asignada.<br><br><b>Asignado a:</b> {tgt_usr}<br><b>Fecha de Entrega Oficial:</b> {r_data['DEADLINE']}<br><br>Se encuentra formalmente EN PROGRESO.")
                         st.success("Asignación guardada y notificada a los involucrados.")
                         st.rerun()
         else:
@@ -769,11 +789,23 @@ else:
                     "PRIORITY_SCORE": 6.0
                 }
                 if insert_request(data):
-                    send_email_notification(
-                        user_email, 
-                        f"Solicitud Recibida - {title}", 
-                        f"Hola, hemos recibido tu solicitud <b>{title}</b>. Basado en su SLA ({SLA_MAPPING[sla_level]['label']}), la entrega estimada es para el {deadline}.<br><br>Atentamente,<br>Synapse Data Ops"
-                    )
+                    req_details = f"""
+                    Hola, hemos recibido tu solicitud <b>{title}</b>.<br><br>
+                    <b>Detalles de la solicitud:</b><br>
+                    <ul>
+                        <li><b>Marca:</b> {brand}</li>
+                        <li><b>Tipo:</b> {req_type}</li>
+                        <li><b>Nivel SLA:</b> {SLA_MAPPING[sla_level]['label']}</li>
+                        <li><b>Contexto:</b> {context}</li>
+                        <li><b>KPIs:</b> {kpis}</li>
+                        <li><b>Uso del Dato:</b> {usage}</li>
+                    </ul>
+                    <br>
+                    Basado en la complejidad, la entrega estimada es para el <b>{deadline}</b>.<br>
+                    El estado actual es: <b>PENDIENTE</b>.<br><br>
+                    Atentamente,<br>Synapse Data Ops
+                    """
+                    send_email_notification(user_email, f"Solicitud Recibida - {title}", req_details)
                     send_email_notification(
                         "datahublobueno@gmail.com",
                         f"NUEVA SOLICITUD: {title}",
