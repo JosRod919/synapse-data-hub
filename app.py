@@ -294,6 +294,15 @@ def get_requests():
         req = req.merge(brands[['BRAND_ID', 'BRAND_NAME']], on='BRAND_ID', how='left')
     else: req['BRAND_NAME'] = 'N/A'
     
+    if not users.empty:
+        req = req.merge(users[['USER_ID', 'FULL_NAME', 'EMAIL']], left_on='ASSIGNED_TO', right_on='USER_ID', how='left')
+        req.rename(columns={'FULL_NAME': 'ASSIGNED_TO_NAME', 'EMAIL': 'ASSIGNED_TO_EMAIL'}, inplace=True)
+        if 'REQUESTER_EMAIL' in req.columns and 'EMAIL' in users.columns:
+            u_dd = users[['EMAIL', 'FULL_NAME']].drop_duplicates('EMAIL')
+            req = req.merge(u_dd, left_on='REQUESTER_EMAIL', right_on='EMAIL', how='left')
+            req.rename(columns={'FULL_NAME': 'REQUESTER_NAME'}, inplace=True)
+    else: req['ASSIGNED_TO_NAME'] = 'Sin asignar'
+    
     req['BRAND_NAME'] = req.get('BRAND_NAME', 'N/A')
     req['ASSIGNED_TO_NAME'] = req.get('ASSIGNED_TO_NAME', 'Sin asignar').fillna('Sin asignar')
     req['REQUESTER_NAME'] = req.get('REQUESTER_NAME', req.get('REQUESTER_EMAIL', 'Desconocido')).fillna(req.get('REQUESTER_EMAIL', 'Desconocido'))
@@ -623,9 +632,10 @@ if is_ops(app_role):
                     m1.metric("Horas Totales", task.get('TOTAL_ESTIMATED_HOURS', 0))
                     m2.metric("Horas Ejecutadas", task.get('HOURS_EXECUTED', 0))
                     m3.metric("Horas Faltantes", task.get('HOURS_REMAINING', 0))
-                    if st.button("✅ Marcar como Completado", key=f"c_{task['REQUEST_ID']}"):
-                        if mark_task_complete(task['REQUEST_ID']):
-                            st.success("¡Tarea completada!")
+                    if st.button("👀 Enviar a Revisión", key=f"rev_{task['REQUEST_ID']}"):
+                        if update_row('REQUESTS', 'REQUEST_ID', task['REQUEST_ID'], {'STATUS': 'EN REVISIÓN', 'UPDATED_AT': str(datetime.now())}):
+                            send_email_notification('datahublobueno@gmail.com', f"Tarea para Revisión: {task['TITLE']}", f"El usuario {user_name} ha marcado la tarea <b>{task['TITLE']}</b> como lista para revisión.<br><br>Revisa el dashboard de Synapse para validar y cerrar la solicitud de forma final.")
+                            st.success("Tarea enviada a revisión correctamente.")
                             st.rerun()
         else:
             st.success("✅ No tienes tareas pendientes")
