@@ -294,20 +294,26 @@ def get_requests():
         req = req.merge(brands[['BRAND_ID', 'BRAND_NAME']], on='BRAND_ID', how='left')
     else: req['BRAND_NAME'] = 'N/A'
     
-    if not users.empty:
-        req = req.merge(users[['USER_ID', 'FULL_NAME', 'EMAIL']], left_on='ASSIGNED_TO', right_on='USER_ID', how='left')
-        req.rename(columns={'FULL_NAME': 'ASSIGNED_TO_NAME', 'EMAIL': 'ASSIGNED_TO_EMAIL'}, inplace=True)
-        if 'REQUESTER_EMAIL' in req.columns and 'EMAIL' in users.columns:
-            u_dd = users[['EMAIL', 'FULL_NAME']].drop_duplicates('EMAIL')
-            req = req.merge(u_dd, left_on='REQUESTER_EMAIL', right_on='EMAIL', how='left')
-            req.rename(columns={'FULL_NAME': 'REQUESTER_NAME'}, inplace=True)
-    else: req['ASSIGNED_TO_NAME'] = 'Sin asignar'
-    
     req['BRAND_NAME'] = req.get('BRAND_NAME', 'N/A')
     req['ASSIGNED_TO_NAME'] = req.get('ASSIGNED_TO_NAME', 'Sin asignar').fillna('Sin asignar')
     req['REQUESTER_NAME'] = req.get('REQUESTER_NAME', req.get('REQUESTER_EMAIL', 'Desconocido')).fillna(req.get('REQUESTER_EMAIL', 'Desconocido'))
     
     req['PRIORITY_SCORE'] = pd.to_numeric(req.get('PRIORITY_SCORE', 0), errors='coerce').fillna(0)
+    req['TOTAL_ESTIMATED_HOURS'] = pd.to_numeric(req.get('TOTAL_ESTIMATED_HOURS', 40), errors='coerce').fillna(40)
+    
+    # Calcular Horas Planeadas/Ejecutadas
+    assigns = load_table('WEEKLY_ASSIGNMENTS')
+    if not assigns.empty and 'HOURS_ASSIGNED' in assigns.columns:
+        assigns['HOURS_ASSIGNED'] = pd.to_numeric(assigns['HOURS_ASSIGNED'], errors='coerce').fillna(0)
+        planned = assigns.groupby('REQUEST_ID')['HOURS_ASSIGNED'].sum().reset_index()
+        planned.rename(columns={'HOURS_ASSIGNED': 'HOURS_EXECUTED'}, inplace=True)
+        req = req.merge(planned, on='REQUEST_ID', how='left')
+    else:
+        req['HOURS_EXECUTED'] = 0
+        
+    req['HOURS_EXECUTED'] = pd.to_numeric(req.get('HOURS_EXECUTED', 0), errors='coerce').fillna(0)
+    req['HOURS_REMAINING'] = req['TOTAL_ESTIMATED_HOURS'] - req['HOURS_EXECUTED']
+    
     return req
 
 def get_pending_requests():
@@ -333,22 +339,8 @@ def get_my_assigned_tasks(email):
 
 def get_in_progress_tasks():
     req = get_requests()
-    assigns = load_table('WEEKLY_ASSIGNMENTS')
     if req.empty: return req
     inp = req[req['STATUS'].astype(str).str.upper() == 'EN PROGRESO']
-    if inp.empty: return inp
-    
-    if not assigns.empty:
-        assigns['HOURS_ASSIGNED'] = pd.to_numeric(assigns['HOURS_ASSIGNED'], errors='coerce').fillna(0)
-        planned = assigns.groupby('REQUEST_ID')['HOURS_ASSIGNED'].sum().reset_index()
-        planned.rename(columns={'HOURS_ASSIGNED': 'HOURS_PLANNED'}, inplace=True)
-        inp = inp.merge(planned, on='REQUEST_ID', how='left')
-    else:
-        inp['HOURS_PLANNED'] = 0
-        
-    inp['TOTAL_ESTIMATED_HOURS'] = pd.to_numeric(inp.get('TOTAL_ESTIMATED_HOURS', 40), errors='coerce').fillna(40)
-    inp['HOURS_PLANNED'] = inp['HOURS_PLANNED'].fillna(0)
-    inp['HOURS_REMAINING'] = inp['TOTAL_ESTIMATED_HOURS'] - inp['HOURS_PLANNED']
     return inp.sort_values('PRIORITY_SCORE', ascending=False)
 
 def get_task_weekly_plan(request_id):
@@ -535,7 +527,7 @@ if is_ops(app_role):
             col2.metric("Pendientes", len(df[df['STATUS'].astype(str).str.upper() == 'PENDIENTE']))
             col3.metric("En Progreso", len(df[df['STATUS'].astype(str).str.upper() == 'EN PROGRESO']))
             col4.metric("Completados", len(df[df['STATUS'].astype(str).str.upper() == 'COMPLETADO']))
-            st.dataframe(df[['REQUEST_ID', 'TITLE', 'REQUESTER_NAME', 'TOTAL_ESTIMATED_HOURS', 'BRAND_NAME', 'STATUS', 'DEADLINE', 'ASSIGNED_TO_NAME', 'PRIORITY_SCORE']].sort_values('PRIORITY_SCORE', ascending=False), use_container_width=True, hide_index=True)
+            st.dataframe(df[['REQUEST_ID', 'TITLE', 'REQUESTER_NAME', 'TOTAL_ESTIMATED_HOURS', 'HOURS_EXECUTED', 'HOURS_REMAINING', 'BRAND_NAME', 'STATUS', 'DEADLINE', 'ASSIGNED_TO_NAME', 'PRIORITY_SCORE']].sort_values('PRIORITY_SCORE', ascending=False), use_container_width=True, hide_index=True)
             
             st.divider()
             st.subheader("🛠️ Gestionar Solicitudes Activas")
@@ -545,6 +537,17 @@ if is_ops(app_role):
                 req_idx = int(sel_req.split(" - ")[0])
                 req_data = reqs[reqs['REQUEST_ID'] == req_idx].iloc[0]
                 
+                with st.expander("👁️ Detalles Completos y Métricas de la Solicitud", expanded=False):
+                    st.write(f"**Solicitante:** {req_data.get('REQUESTER_NAME', '')}")
+                    st.write(f"**Contexto y Objetivo:** {req_data.get('BUSINESS_CONTEXT', '')}")
+                    st.write(f"**KPIs Esperados:** {req_data.get('EXPECTED_KPIS', '')}")
+                    st.write(f"**Uso del Dato:** {req_data.get('DATA_USAGE', '')}")
+                    st.info(f"**SLA:** {req_data.get('SLA_EXPECTED', '')} | **Deadline Oficial:** {req_data.get('DEADLINE', '')}")
+                    m1, m2, m3 = st.columns(3)
+                    m1.metric("Horas Totales", req_data.get('TOTAL_ESTIMATED_HOURS', 0))
+                    m2.metric("Horas Ejecutadas", req_data.get('HOURS_EXECUTED', 0))
+                    m3.metric("Horas Faltantes", req_data.get('HOURS_REMAINING', 0))
+
                 c1, c2 = st.columns(2)
                 with c1:
                     with st.form(f"ask_info_{req_idx}"):
@@ -572,8 +575,24 @@ if is_ops(app_role):
                                 send_email_notification(e_target, f"Fecha Reprogramada: {req_data['TITLE']}", f"Te informamos que la fecha de entrega oficial de <b>{req_data['TITLE']}</b> ha sido reestimada al <b>{new_date}</b>.")
                                 st.success("Fecha y SLA actualizados.")
                                 st.rerun()
+                                
+                with st.form(f"rework_{req_idx}"):
+                    st.markdown("**3. Registrar Reproceso (Adición de Horas)**")
+                    rw_cause = st.text_area("Causa del Reproceso", key="rwcause")
+                    rw_hours = st.number_input("Horas a Adicionar", value=0.0, step=0.5, key="rwhours")
+                    if st.form_submit_button("Registrar Reproceso", use_container_width=True):
+                        if rw_cause and rw_hours > 0:
+                            new_ctx = str(req_data.get('BUSINESS_CONTEXT', '')) + f"\n\n[REPROCESO {datetime.now().strftime('%Y-%m-%d')}]: {rw_cause} (+{rw_hours}h)"
+                            new_total = float(req_data.get('TOTAL_ESTIMATED_HOURS', 0)) + float(rw_hours)
+                            update_row('REQUESTS', 'REQUEST_ID', req_idx, {'BUSINESS_CONTEXT': new_ctx, 'TOTAL_ESTIMATED_HOURS': new_total, 'UPDATED_AT': str(datetime.now())})
+                            e_target = req_data.get('REQUESTER_EMAIL', '')
+                            if pd.isna(e_target): e_target = ''
+                            send_email_notification(e_target, f"Actualización de Alcance: {req_data['TITLE']}", f"Se ha registrado un reproceso en tu solicitud <b>{req_data['TITLE']}</b>.<br><br><b>Causa:</b> {rw_cause}<br>Horas adicionadas al estimado: {rw_hours}h.")
+                            st.success("Reproceso registrado correctamente.")
+                            st.rerun()
+
                 st.divider()
-                st.markdown("**3. Cierre de Solicitud (Finalización)**")
+                st.markdown("**4. Cierre de Solicitud (Finalización)**")
                 if st.button("🏁 Marcar Solicitud como COMPLETADA", type="primary", use_container_width=True):
                     if update_row('REQUESTS', 'REQUEST_ID', req_idx, {'STATUS': 'COMPLETADO', 'UPDATED_AT': str(datetime.now())}):
                         e_target = req_data.get('REQUESTER_EMAIL', '')
@@ -600,6 +619,10 @@ if is_ops(app_role):
                     st.info(f"**Contexto y Objetivo:** {task['BUSINESS_CONTEXT']}")
                     st.write(f"**📈 KPIs Esperados:** {task.get('EXPECTED_KPIS', 'N/A')}")
                     st.write(f"**📅 Uso del Dato:** {task.get('DATA_USAGE', 'N/A')}")
+                    m1, m2, m3 = st.columns(3)
+                    m1.metric("Horas Totales", task.get('TOTAL_ESTIMATED_HOURS', 0))
+                    m2.metric("Horas Ejecutadas", task.get('HOURS_EXECUTED', 0))
+                    m3.metric("Horas Faltantes", task.get('HOURS_REMAINING', 0))
                     if st.button("✅ Marcar como Completado", key=f"c_{task['REQUEST_ID']}"):
                         if mark_task_complete(task['REQUEST_ID']):
                             st.success("¡Tarea completada!")
@@ -625,7 +648,11 @@ if is_ops(app_role):
                 st.write(f"**Contexto y Objetivo:** {r_data.get('BUSINESS_CONTEXT', '')}")
                 st.write(f"**KPIs Esperados:** {r_data.get('EXPECTED_KPIS', '')}")
                 st.write(f"**Uso del Dato:** {r_data.get('DATA_USAGE', '')}")
-                st.info(f"**SLA:** {r_data.get('SLA_EXPECTED', '')} | **Deadline Oficial:** {r_data.get('DEADLINE', '')} | **Esfuerzo:** {r_data.get('TOTAL_ESTIMATED_HOURS', '')}h")
+                st.info(f"**SLA:** {r_data.get('SLA_EXPECTED', '')} | **Deadline Oficial:** {r_data.get('DEADLINE', '')}")
+                m1, m2, m3 = st.columns(3)
+                m1.metric("Horas Totales", r_data.get('TOTAL_ESTIMATED_HOURS', 0))
+                m2.metric("Horas Ejecutadas", r_data.get('HOURS_EXECUTED', 0))
+                m3.metric("Horas Faltantes", r_data.get('HOURS_REMAINING', 0))
                 
             with st.form("assign_new"):
                 c1, c2 = st.columns(2)
@@ -822,6 +849,14 @@ else:
                 with st.expander(f"📌 {r['TITLE']} - {r['STATUS']}"):
                     st.write(f"**Asignado a:** {r.get('ASSIGNED_TO_NAME', 'Pendiente')}")
                     st.write(f"**Deadline:** {r.get('DEADLINE', 'N/A')}")
+                    st.info(f"**Contexto y Objetivo:** {r.get('BUSINESS_CONTEXT', '')}")
+                    st.write(f"**KPIs Esperados:** {r.get('EXPECTED_KPIS', '')}")
+                    st.write(f"**Uso del Dato:** {r.get('DATA_USAGE', '')}")
+                    m1, m2, m3 = st.columns(3)
+                    m1.metric("Horas Totales Estimadas", r.get('TOTAL_ESTIMATED_HOURS', 0))
+                    m2.metric("Horas Ejecutadas", r.get('HOURS_EXECUTED', 0))
+                    m3.metric("Horas Faltantes", r.get('HOURS_REMAINING', 0))
+                    
                     if str(r.get('STATUS', '')).upper() == 'ESPERANDO INFO':
                         st.warning(f"**Admin solicita aclaración:** {r.get('ADMIN_FEEDBACK', 'Por favor brinda más contexto/datos sobre esta solicitud.')}")
                         with st.form(f"v_upd_{r['REQUEST_ID']}"):
