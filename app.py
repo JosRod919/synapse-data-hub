@@ -632,11 +632,19 @@ if is_ops(app_role):
                     m1.metric("Horas Totales", task.get('TOTAL_ESTIMATED_HOURS', 0))
                     m2.metric("Horas Ejecutadas", task.get('HOURS_EXECUTED', 0))
                     m3.metric("Horas Faltantes", task.get('HOURS_REMAINING', 0))
-                    if st.button("👀 Enviar a Revisión", key=f"rev_{task['REQUEST_ID']}"):
-                        if update_row('REQUESTS', 'REQUEST_ID', task['REQUEST_ID'], {'STATUS': 'EN REVISIÓN', 'UPDATED_AT': str(datetime.now())}):
-                            send_email_notification('datahublobueno@gmail.com', f"Tarea para Revisión: {task['TITLE']}", f"El usuario {user_name} ha marcado la tarea <b>{task['TITLE']}</b> como lista para revisión.<br><br>Revisa el dashboard de Synapse para validar y cerrar la solicitud de forma final.")
-                            st.success("Tarea enviada a revisión correctamente.")
-                            st.rerun()
+                    with st.form(f"f_rev_{task['REQUEST_ID']}"):
+                        st.markdown("**Entregables para Revisión**")
+                        rev_links = st.text_input("Enlaces a documentos o Dashboards (Obligatorio)")
+                        rev_desc = st.text_area("Breve explicación de la tarea realizada (Obligatorio)")
+                        if st.form_submit_button("👀 Enviar a Revisión", use_container_width=True):
+                            if rev_links and rev_desc:
+                                new_ctx = str(task.get('BUSINESS_CONTEXT', '')) + f"\n\n[ENTREGADO PARA REVISIÓN]:\nEnlaces: {rev_links}\nExplicación: {rev_desc}"
+                                if update_row('REQUESTS', 'REQUEST_ID', task['REQUEST_ID'], {'STATUS': 'EN REVISIÓN', 'BUSINESS_CONTEXT': new_ctx, 'UPDATED_AT': str(datetime.now())}):
+                                    send_email_notification('datahublobueno@gmail.com', f"Tarea para Revisión: {task['TITLE']}", f"El usuario {user_name} ha marcado la tarea <b>{task['TITLE']}</b> como lista para revisión.<br><br><b>Enlaces:</b> {rev_links}<br><b>Explicación:</b> {rev_desc}<br><br>Revisa el dashboard de Synapse para validar y cerrar la solicitud de forma final.")
+                                    st.success("Tarea enviada a revisión correctamente.")
+                                    st.rerun()
+                            else:
+                                st.error("Debes incluir los enlaces y la explicación para enviar a revisión.")
         else:
             st.success("✅ No tienes tareas pendientes")
             
