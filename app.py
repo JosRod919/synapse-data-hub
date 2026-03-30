@@ -484,14 +484,14 @@ with st.sidebar:
     st.markdown(f"**Rol:** `{app_role}`")
     
     import os
-    if os.path.exists("workflow_synapse.md"):
+    if os.path.exists("workflow_synapse.html"):
         st.divider()
-        with open("workflow_synapse.md", "r", encoding="utf-8") as f:
+        with open("workflow_synapse.html", "rb") as f:
             st.download_button(
                 label="📄 Descargar Manual App",
                 data=f.read(),
-                file_name="Manual_Procesos_Synapse.md",
-                mime="text/markdown",
+                file_name="Manual_Procesos_Synapse.html",
+                mime="text/html",
                 use_container_width=True
             )
             

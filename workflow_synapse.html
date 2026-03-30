@@ -1,0 +1,169 @@
+<!DOCTYPE html>
+<html lang="es">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Manual de Procesos: Synapse Data Hub</title>
+    <link href="https://fonts.googleapis.com/css2?family=Inter:wght@300;400;600;800&display=swap" rel="stylesheet">
+    <style>
+        :root {
+            --bg-color: #0e1117;
+            --text-color: #f0f2f6;
+            --primary: #f97316;
+            --card-bg: #1a1c24;
+            --border: rgba(255, 255, 255, 0.1);
+        }
+        body {
+            font-family: 'Inter', sans-serif;
+            background-color: var(--bg-color);
+            color: var(--text-color);
+            line-height: 1.6;
+            margin: 0;
+            padding: 40px 20px;
+        }
+        .container {
+            max-width: 800px;
+            margin: 0 auto;
+        }
+        .header {
+            text-align: center;
+            margin-bottom: 50px;
+            animation: fadeInDown 0.8s ease-out;
+        }
+        h1 {
+            font-size: 2.5rem;
+            font-weight: 800;
+            margin-bottom: 10px;
+            background: linear-gradient(90deg, #f97316, #ff9b44);
+            background-clip: text;
+            -webkit-background-clip: text;
+            -webkit-text-fill-color: transparent;
+        }
+        .subtitle {
+            font-size: 1.1rem;
+            color: #a0aabf;
+            font-weight: 300;
+        }
+        .step-card {
+            background-color: var(--card-bg);
+            border: 1px solid var(--border);
+            border-radius: 12px;
+            padding: 30px;
+            margin-bottom: 25px;
+            box-shadow: 0 10px 30px rgba(0, 0, 0, 0.2);
+            transition: transform 0.3s ease, box-shadow 0.3s ease;
+            animation: fadeIn 1s ease-out backwards;
+        }
+        .step-card:hover {
+            transform: translateY(-5px);
+            box-shadow: 0 15px 40px rgba(249, 115, 22, 0.15);
+            border-color: rgba(249, 115, 22, 0.3);
+        }
+        .step-title {
+            display: flex;
+            align-items: center;
+            font-size: 1.4rem;
+            font-weight: 600;
+            color: white;
+            margin-top: 0;
+            margin-bottom: 20px;
+            border-bottom: 1px solid var(--border);
+            padding-bottom: 15px;
+        }
+        .step-number {
+            background-color: var(--primary);
+            color: white;
+            width: 35px;
+            height: 35px;
+            border-radius: 50%;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            font-size: 1.1rem;
+            margin-right: 15px;
+            flex-shrink: 0;
+        }
+        ul {
+            padding-left: 20px;
+            margin: 0;
+        }
+        li {
+            margin-bottom: 12px;
+            color: #d1d5db;
+        }
+        li strong {
+            color: #ffffff;
+        }
+        code {
+            background-color: rgba(255, 255, 255, 0.1);
+            padding: 2px 6px;
+            border-radius: 4px;
+            color: var(--primary);
+            font-size: 0.9em;
+        }
+        @keyframes fadeInDown {
+            from { opacity: 0; transform: translateY(-20px); }
+            to { opacity: 1; transform: translateY(0); }
+        }
+        @keyframes fadeIn {
+            from { opacity: 0; transform: translateY(20px); }
+            to { opacity: 1; transform: translateY(0); }
+        }
+    </style>
+</head>
+<body>
+    <div class="container">
+        <div class="header">
+            <h1>Synapse Data Hub</h1>
+            <div class="subtitle">Manual Oficial de Flujos y Procesos Operativos</div>
+        </div>
+
+        <div class="step-card" style="animation-delay: 0.1s;">
+            <h2 class="step-title"><span class="step-number">1</span> Creación de Solicitud (Viewer)</h2>
+            <ul>
+                <li>Un empleado o cliente entra al apartado <code>📝 Nueva Solicitud</code>.</li>
+                <li>Completa el formulario de categorización, especificando Contexto de Negocio, KPIs Esperados y Uso del Dato.</li>
+                <li>Al seleccionar la categoría y el nivel de complejidad (SLA Antigravity Levels 1 al 6), se hace un cálculo transparente que asigna un tiempo máximo estimado y una <strong>Fecha Límite</strong> objetiva base para reportar.</li>
+                <li>Con clic en <em>Enviar</em>, el registro viaja a la base de datos central como estado <strong>PENDIENTE</strong> y se dispara una notificación de recibido por correo (vía SendGrid).</li>
+            </ul>
+        </div>
+
+        <div class="step-card" style="animation-delay: 0.2s;">
+            <h2 class="step-title"><span class="step-number">2</span> Recepción y Triaje (Ops/Admin)</h2>
+            <ul>
+                <li>Los usuarios Administradores y Operaciones visualizan el nuevo ticket en el <code>📊 Dashboard</code>.</li>
+                <li>Evalúan la descripción general desde el expansor de detalles.</li>
+                <li>Si la tarea carece de contexto suficiente para trabajarla (ej. no se entiende un KPI o falta un acceso), la detienen usando <strong>Pedir Aclaración</strong> cambiando el estado a <em>Esperando Info</em>. Un correo advierte de esta situación al creador original.</li>
+                <li>Mismas acciones pueden hacerse para Reprogramar Deadlines si un SLA es subestimado estructuralmente.</li>
+            </ul>
+        </div>
+
+        <div class="step-card" style="animation-delay: 0.3s;">
+            <h2 class="step-title"><span class="step-number">3</span> Asignación Activa (En Progreso)</h2>
+            <ul>
+                <li>Cuando la solicitud ha sido depurada, el perfil Owner/Admin se dirige a la pestaña <code>👥 Asignar</code>.</li>
+                <li><strong>Match de equipo:</strong> El sistema muestra una lista con los operadores disponibles, cruzado contra las "Horas requeridas semanales" en el control del <code>📋 Equipo</code>, asegurando que nadie supere las 40 horas al límite (Control de burnout).</li>
+                <li>Al guardar, la tarea escala al estatus <strong>EN PROGRESO</strong>, inscribiéndose formalmente y mandando un aviso en tiempo real al Analista asignado para que empiece el Delivery.</li>
+            </ul>
+        </div>
+
+        <div class="step-card" style="animation-delay: 0.4s;">
+            <h2 class="step-title"><span class="step-number">4</span> Desarrollo y Checkpoint (En Revisión)</h2>
+            <ul>
+                <li>El analista asignado procede a trabajar conectándose a bases de datos o desarrollando en Python/BI.</li>
+                <li>Al finalizar, en su pestaña de <code>🎯 Mis Tareas</code> adjuntará las URLs de los Dashboards, Notebooks o Documentos construidos, acompañados de una explicación del razonamiento.</li>
+                <li>Se hace clic en "Enviar a Revisión". El ticket muta a <strong>EN REVISIÓN</strong> avisando al Owner y Líder de Proyecto que el trabajo está listo para escrutinio formal.</li>
+            </ul>
+        </div>
+
+        <div class="step-card" style="animation-delay: 0.5s;">
+            <h2 class="step-title"><span class="step-number">5</span> Finalización o Reproceso</h2>
+            <ul>
+                <li>En el <code>📊 Dashboard</code>, el Data Lead o el Admin visualiza el entregable reportado.</li>
+                <li><strong>Si el entregable es correcto:</strong> Hace clic en "Marcar Solicitud como COMPLETADA", dando cierre definitivo y enviando un agradecimiento al cliente.</li>
+                <li><strong>Si el entregable requiere re-work:</strong> Registra el concepto en la sección de "Reprocesos", añade las horas adición consumidas y la tarea repite la parte tardía del ciclo de atención.</li>
+            </ul>
+        </div>
+    </div>
+</body>
+</html>
