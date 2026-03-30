@@ -1012,27 +1012,65 @@ else:
         st.subheader("📋 Mis Solicitudes")
         req = get_requests()
         if not req.empty:
-            my_req = req[req['REQUESTER_EMAIL'].astype(str).str.upper() == user_email.upper()]
-            for _, r in my_req.iterrows():
-                with st.expander(f"📌 {r['TITLE']} - {r['STATUS']}"):
-                    st.write(f"**Asignado a:** {r.get('ASSIGNED_TO_NAME', 'Pendiente')}")
-                    st.write(f"**Deadline:** {r.get('DEADLINE', 'N/A')}")
-                    st.info(f"**Contexto y Objetivo:** {r.get('BUSINESS_CONTEXT', '')}")
-                    st.write(f"**KPIs Esperados:** {r.get('EXPECTED_KPIS', '')}")
-                    st.write(f"**Uso del Dato:** {r.get('DATA_USAGE', '')}")
-                    m1, m2, m3 = st.columns(3)
-                    m1.metric("Horas Totales Estimadas", r.get('TOTAL_ESTIMATED_HOURS', 0))
-                    m2.metric("Horas Ejecutadas", r.get('HOURS_EXECUTED', 0))
-                    m3.metric("Horas Faltantes", r.get('HOURS_REMAINING', 0))
-                    
-                    if str(r.get('STATUS', '')).upper() == 'ESPERANDO INFO':
-                        st.warning(f"**Admin solicita aclaración:** {r.get('ADMIN_FEEDBACK', 'Por favor brinda más contexto/datos sobre esta solicitud.')}")
-                        with st.form(f"v_upd_{r['REQUEST_ID']}"):
-                            extra = st.text_area("Añade la información solicitada o enlaces de Drive:")
-                            if st.form_submit_button("Enviar Aclaración", use_container_width=True):
-                                if extra:
-                                    n_ctx = str(r.get('BUSINESS_CONTEXT', '')) + f"\n\n[ACLARACIÓN {datetime.now().strftime('%Y-%m-%d')}]: {extra}"
-                                    update_row('REQUESTS', 'REQUEST_ID', r['REQUEST_ID'], {'STATUS': 'PENDIENTE', 'BUSINESS_CONTEXT': n_ctx, 'UPDATED_AT': str(datetime.now())})
-                                    send_email_notification('datahublobueno@gmail.com', f"Aclaración Recibida: {r['TITLE']}", f"El usuario {user_email} ha respondido a la solicitud de info en la tarea: <b>{r['TITLE']}</b>.<br><br><b>Información Añadida:</b><br>{extra}")
-                                    st.success("Aclaración enviada al equipo.")
-                                    st.rerun()
+            my_req_base = req[req['REQUESTER_EMAIL'].astype(str).str.upper() == user_email.upper()]
+            
+            if not my_req_base.empty:
+                # Filtros del Viewer
+                with st.expander("🔍 Filtros de Mis Solicitudes", expanded=False):
+                    vc1, vc2, vc3 = st.columns(3)
+                    v_status = vc1.multiselect("Estado", my_req_base['STATUS'].unique(), default=[], key="v_filt_st")
+                    v_brand_list = my_req_base['BRAND_NAME'].dropna().unique().tolist() if 'BRAND_NAME' in my_req_base.columns else []
+                    v_brand = vc2.multiselect("🏷️ Marca", sorted(v_brand_list), default=[], key="v_filt_br")
+                    if 'CREATED_AT' in my_req_base.columns:
+                        try:
+                            _vd = pd.to_datetime(my_req_base[my_req_base['CREATED_AT'].notnull()]['CREATED_AT']).dt.date
+                            v_min, v_max = _vd.min(), _vd.max()
+                        except: v_min, v_max = date.today(), date.today()
+                        v_date_range = vc3.date_input("📅 Fecha de Creación", value=[v_min, v_max], key="v_filt_dt")
+                    else:
+                        v_date_range = []
+                
+                my_req = my_req_base.copy()
+                if v_status: my_req = my_req[my_req['STATUS'].astype(str).str.upper().isin([s.upper() for s in v_status])]
+                if v_brand and 'BRAND_NAME' in my_req.columns: my_req = my_req[my_req['BRAND_NAME'].isin(v_brand)]
+                if 'CREATED_AT' in my_req.columns and len(v_date_range) == 2:
+                    my_req['_vdt'] = pd.to_datetime(my_req['CREATED_AT']).dt.date
+                    my_req = my_req[(my_req['_vdt'] >= v_date_range[0]) & (my_req['_vdt'] <= v_date_range[1])]
+                
+                # Métricas resumen
+                vm1, vm2, vm3, vm4 = st.columns(4)
+                vm1.metric("Total", len(my_req))
+                vm2.metric("Pendientes", len(my_req[my_req['STATUS'].astype(str).str.upper() == 'PENDIENTE']))
+                vm3.metric("En Progreso", len(my_req[my_req['STATUS'].astype(str).str.upper() == 'EN PROGRESO']))
+                vm4.metric("Completadas", len(my_req[my_req['STATUS'].astype(str).str.upper() == 'COMPLETADO']))
+                
+                st.divider()
+                
+                for _, r in my_req.iterrows():
+                    with st.expander(f"📌 {r['TITLE']} - {r['STATUS']}"):
+                        st.write(f"**Marca:** {r.get('BRAND_NAME', 'N/A')}")
+                        st.write(f"**Asignado a:** {r.get('ASSIGNED_TO_NAME', 'Pendiente')}")
+                        st.write(f"**Deadline:** {r.get('DEADLINE', 'N/A')}")
+                        st.info(f"**Contexto y Objetivo:** {r.get('BUSINESS_CONTEXT', '')}")
+                        st.write(f"**KPIs Esperados:** {r.get('EXPECTED_KPIS', '')}")
+                        st.write(f"**Uso del Dato:** {r.get('DATA_USAGE', '')}")
+                        m1, m2, m3 = st.columns(3)
+                        m1.metric("Horas Totales Estimadas", r.get('TOTAL_ESTIMATED_HOURS', 0))
+                        m2.metric("Horas Ejecutadas", r.get('HOURS_EXECUTED', 0))
+                        m3.metric("Horas Faltantes", r.get('HOURS_REMAINING', 0))
+                        
+                        if str(r.get('STATUS', '')).upper() == 'ESPERANDO INFO':
+                            st.warning(f"**Admin solicita aclaración:** {r.get('ADMIN_FEEDBACK', 'Por favor brinda más contexto/datos sobre esta solicitud.')}")
+                            with st.form(f"v_upd_{r['REQUEST_ID']}"):
+                                extra = st.text_area("Añade la información solicitada o enlaces de Drive:")
+                                if st.form_submit_button("Enviar Aclaración", use_container_width=True):
+                                    if extra:
+                                        n_ctx = str(r.get('BUSINESS_CONTEXT', '')) + f"\n\n[ACLARACIÓN {datetime.now().strftime('%Y-%m-%d')}]: {extra}"
+                                        update_row('REQUESTS', 'REQUEST_ID', r['REQUEST_ID'], {'STATUS': 'PENDIENTE', 'BUSINESS_CONTEXT': n_ctx, 'UPDATED_AT': str(datetime.now())})
+                                        send_email_notification('datahublobueno@gmail.com', f"Aclaración Recibida: {r['TITLE']}", f"El usuario {user_email} ha respondido a la solicitud de info en la tarea: <b>{r['TITLE']}</b>.<br><br><b>Información Añadida:</b><br>{extra}")
+                                        st.success("Aclaración enviada al equipo.")
+                                        st.rerun()
+            else:
+                st.info("Aún no tienes solicitudes registradas.")
+        else:
+            st.info("No hay solicitudes en el sistema.")
