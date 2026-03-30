@@ -823,7 +823,18 @@ if is_ops(app_role):
 
     with tabs[4]:
         st.subheader("📋 Carga del Equipo")
-        wk_df = get_workload_by_week(sel_week)
+        
+        with st.expander("🔍 Filtros de Equipo", expanded=False):
+            eq_c1, eq_c2 = st.columns(2)
+            eq_week_opts = get_week_options(12)
+            eq_wk_idx = eq_c1.selectbox("📅 Semana", range(len(eq_week_opts)), format_func=lambda x: eq_week_opts[x][1], key="eq_wk")
+            eq_week = eq_week_opts[eq_wk_idx][0]
+            eq_name_filter = eq_c2.text_input("🔎 Filtrar por Colaborador", key="eq_name")
+        
+        wk_df = get_workload_by_week(eq_week)
+        if eq_name_filter and not wk_df.empty:
+            wk_df = wk_df[wk_df['FULL_NAME'].str.lower().str.contains(eq_name_filter.lower())]
+        
         if not wk_df.empty:
             all_reqs = get_requests()
             for _, r in wk_df.iterrows():
@@ -850,7 +861,10 @@ if is_ops(app_role):
                                 st.markdown(f"🔹 **{ur['TITLE']}** (Entrega: {ur['DEADLINE']})")
                                 st.progress(t_pct)
                                 st.caption(f"Avance esperado por desgaste de tiempo: {int(t_pct*100)}%")
-            st.dataframe(wk_df[['FULL_NAME', 'HOURS_MON', 'HOURS_TUE', 'HOURS_WED', 'HOURS_THU', 'HOURS_FRI', 'HOURS_ASSIGNED']], hide_index=True)
+            show_eq_cols = [c for c in ['FULL_NAME', 'HOURS_MON', 'HOURS_TUE', 'HOURS_WED', 'HOURS_THU', 'HOURS_FRI', 'HOURS_ASSIGNED'] if c in wk_df.columns]
+            st.dataframe(wk_df[show_eq_cols], hide_index=True)
+        else:
+            st.info("No hay datos de carga para la semana y filtro seleccionados.")
             
     with tabs[5]:
         if is_admin(app_role):
