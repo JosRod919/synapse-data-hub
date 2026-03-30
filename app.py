@@ -413,9 +413,16 @@ def get_current_week_start():
     today = date.today()
     return today - timedelta(days=today.weekday())
 
-def get_week_options(num_weeks=8):
+def get_week_options(num_weeks=8, past_weeks=4):
     current = get_current_week_start()
-    return [(current + timedelta(weeks=i), f"Sem {i+1}: {(current + timedelta(weeks=i)).strftime('%d/%m')} - {(current + timedelta(weeks=i) + timedelta(days=4)).strftime('%d/%m')}") for i in range(num_weeks)]
+    weeks = []
+    for i in range(-past_weeks, num_weeks):
+        wk_start = current + timedelta(weeks=i)
+        wk_end = wk_start + timedelta(days=4)
+        iso_week = wk_start.isocalendar()[1]
+        label = f"Semana {iso_week}: {wk_start.strftime('%d/%m/%Y')} - {wk_end.strftime('%d/%m/%Y')}"
+        weeks.append((wk_start, label))
+    return weeks
 
 # --- ACCIONES ---
 def insert_request(data):
