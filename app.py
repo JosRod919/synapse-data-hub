@@ -102,6 +102,8 @@ st.markdown("""
         box-shadow: 0 4px 6px rgba(0, 0, 0, 0.1); border: 1px solid rgba(128, 128, 128, 0.2);
     }
     .streamlit-expanderHeader { border-radius: 8px; border: 1px solid rgba(128, 128, 128, 0.2); }
+    [data-testid="stHeader"] { background-color: #1a1a1a !important; }
+    [data-testid="stAppViewContainer"] { background-color: #0e1117; } /* Fija fondo oscuro principal por defecto */
 </style>
 """, unsafe_allow_html=True)
 
@@ -423,7 +425,9 @@ def mark_task_complete(request_id):
 # --- SESIÓN DE USUARIO (LOGIN) ---
 if "user_email" not in st.session_state:
     # Logo
-    st.image("assets/new_logo.png", use_container_width=True)
+    try: st.logo("assets/new_logo.png")
+    except: st.image("assets/new_logo.png", width=280)
+    
     c1, c2, c3 = st.columns([1,2,1])
     with c2:
         st.info("👋 Bienvenido a Synapse. Por favor, ingresa tu correo para continuar.")
@@ -463,8 +467,9 @@ with st.sidebar:
         del st.session_state.user_email
         st.rerun()
 
-# Logo
-st.image("assets/new_logo.png", use_container_width=True)
+# Logo Principal UI
+try: st.logo("assets/new_logo.png")
+except: st.image("assets/new_logo.png", width=280)
 
 # --- UI PRINCIPAL ---
 if is_ops(app_role):
