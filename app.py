@@ -4,6 +4,7 @@ from datetime import date, timedelta, datetime
 import gspread
 from google.oauth2.service_account import Credentials
 import numpy as np
+import re
 from sendgrid import SendGridAPIClient
 from sendgrid.helpers.mail import Mail, Email, To
 
@@ -324,6 +325,15 @@ def get_requests():
     req['HOURS_EXECUTED'] = pd.to_numeric(req.get('HOURS_EXECUTED', 0), errors='coerce').fillna(0)
     req['HOURS_REMAINING'] = req['TOTAL_ESTIMATED_HOURS'] - req['HOURS_EXECUTED']
     
+    def extract_rw(c):
+        if pd.isna(c): return 0.0
+        return sum(float(m) for m in re.findall(r'\(\+([0-9.]+)h\)', str(c)))
+        
+    if 'BUSINESS_CONTEXT' in req.columns:
+        req['REWORK_HOURS'] = req['BUSINESS_CONTEXT'].apply(extract_rw)
+    else: req['REWORK_HOURS'] = 0.0
+    req['IS_REWORKED'] = req['REWORK_HOURS'] > 0
+    
     return req
 
 def get_pending_requests():
@@ -567,19 +577,60 @@ if is_ops(app_role):
                     st.success("✅ Solicitud enviada exitosamente")
     
     with tabs[1]:
-        st.subheader("📊 Dashboard")
-        df = get_requests()
-        if not df.empty:
-            col1, col2, col3, col4 = st.columns(4)
-            col1.metric("Total", len(df))
+        st.subheader("📊 Dashboard Global")
+        df_base = get_requests()
+        if not df_base.empty:
+            with st.expander("🔍 Buscador y Filtros Globales", expanded=False):
+                cf1, cf2, cf3, cf4 = st.columns(4)
+                f_status = cf1.multiselect("Filtrar Estado", df_base['STATUS'].unique(), default=[])
+                f_date_col = cf2.selectbox("Columna Fechas", ["DEADLINE", "CREATED_AT", "Sin Fecha"])
+                if f_date_col != "Sin Fecha":
+                    if f_date_col in df_base.columns:
+                        try:
+                            _dates = pd.to_datetime(df_base[df_base[f_date_col].notnull()][f_date_col]).dt.date
+                            min_d, max_d = _dates.min(), _dates.max()
+                        except: min_d, max_d = date.today(), date.today()
+                        f_date_range = cf3.date_input("Rango", [min_d, max_d], value=[])
+                    else: f_date_range = []
+                else: f_date_range = []
+                
+                f_search = cf4.text_input("Buscador de Texto (Tarea/Email)")
+                
+                # Asignaciones Semanales Activas
+                wko = get_week_options(8)
+                f_week = st.selectbox("📅 Semanas Planeadas (Filtrar tareas asignadas esa semana)", ["Todas"] + [x[1] for x in wko])
+                
+            df = df_base.copy()
+            if f_status: df = df[df['STATUS'].astype(str).str.upper().isin([s.upper() for s in f_status])]
+            if f_search: 
+                q = f_search.lower()
+                df = df[df['TITLE'].str.lower().str.contains(q) | df['REQUESTER_NAME'].str.lower().str.contains(q)]
+            if f_date_col != "Sin Fecha" and len(f_date_range) > 0 and f_date_col in df.columns:
+                df['_dtemp'] = pd.to_datetime(df[f_date_col]).dt.date
+                if len(f_date_range) == 2: df = df[(df['_dtemp'] >= f_date_range[0]) & (df['_dtemp'] <= f_date_range[1])]
+                else: df = df[df['_dtemp'] == f_date_range[0]]
+            if f_week != "Todas":
+                wk_dt = [x[0] for x in wko if x[1] == f_week][0]
+                __wa = load_table('WEEKLY_ASSIGNMENTS')
+                if not __wa.empty:
+                    valid_reqs = __wa[__wa['WEEK_START'].astype(str) == str(wk_dt)]['REQUEST_ID'].unique().tolist()
+                    df = df[df['REQUEST_ID'].astype(str).isin([str(x) for x in valid_reqs])]
+            
+            # Rendering Metrics Row
+            col1, col2, col3, col4, col5 = st.columns(5)
+            col1.metric("Total Solicitudes", len(df))
             col2.metric("Pendientes", len(df[df['STATUS'].astype(str).str.upper() == 'PENDIENTE']))
             col3.metric("En Progreso", len(df[df['STATUS'].astype(str).str.upper() == 'EN PROGRESO']))
             col4.metric("Completados", len(df[df['STATUS'].astype(str).str.upper() == 'COMPLETADO']))
-            st.dataframe(df[['REQUEST_ID', 'TITLE', 'REQUESTER_NAME', 'TOTAL_ESTIMATED_HOURS', 'HOURS_EXECUTED', 'HOURS_REMAINING', 'BRAND_NAME', 'STATUS', 'DEADLINE', 'ASSIGNED_TO_NAME', 'PRIORITY_SCORE']].sort_values('PRIORITY_SCORE', ascending=False), use_container_width=True, hide_index=True)
+            col5.metric("Total Hrs Reproceso", f"{df['REWORK_HOURS'].sum():.1f}h")
+            
+            show_cols = ['REQUEST_ID', 'TITLE', 'REQUESTER_NAME', 'TOTAL_ESTIMATED_HOURS', 'HOURS_EXECUTED', 'HOURS_REMAINING', 'REWORK_HOURS', 'BRAND_NAME', 'STATUS', 'DEADLINE', 'ASSIGNED_TO_NAME', 'PRIORITY_SCORE']
+            valid_cols = [c for c in show_cols if c in df.columns]
+            st.dataframe(df[valid_cols].sort_values(by=['PRIORITY_SCORE', 'REQUEST_ID'], ascending=[False, False]), use_container_width=True, hide_index=True)
             
             st.divider()
             st.subheader("🛠️ Gestionar Solicitudes Activas")
-            reqs = df[df['STATUS'].astype(str).str.upper() != 'COMPLETADO']
+            reqs = df_base[df_base['STATUS'].astype(str).str.upper() != 'COMPLETADO']
             if not reqs.empty:
                 sel_req = st.selectbox("Selecciona una Solicitud", reqs.apply(lambda x: f"{x['REQUEST_ID']} - {x['TITLE']} ({x['STATUS']})", axis=1))
                 req_idx = int(sel_req.split(" - ")[0])
@@ -595,6 +646,14 @@ if is_ops(app_role):
                     m1.metric("Horas Totales", req_data.get('TOTAL_ESTIMATED_HOURS', 0))
                     m2.metric("Horas Ejecutadas", req_data.get('HOURS_EXECUTED', 0))
                     m3.metric("Horas Faltantes", req_data.get('HOURS_REMAINING', 0))
+                    
+                    st.divider()
+                    st.markdown("**📅 Desglose de Asignaciones por Semana**")
+                    w_plan = get_task_weekly_plan(req_idx)
+                    if not w_plan.empty:
+                        st.dataframe(w_plan[['WEEK_START', 'FULL_NAME', 'HOURS_ASSIGNED', 'NOTES']].rename(columns={'WEEK_START': 'Semana', 'FULL_NAME': 'Asignado a', 'HOURS_ASSIGNED': 'Horas', 'NOTES': 'Notas'}), hide_index=True, use_container_width=True)
+                    else:
+                        st.info("Esta tarea aún no tiene horas asignadas en ninguna semana.")
 
                 if is_strategist_or_admin(app_role):
                     c1, c2 = st.columns(2)
@@ -656,37 +715,52 @@ if is_ops(app_role):
             
     with tabs[2]:
         st.subheader("🎯 Mis Tareas Asignadas")
-        my_tasks = get_my_assigned_tasks(user_email)
-        if not my_tasks.empty:
-            for _, task in my_tasks.iterrows():
-                days_left = task.get('DAYS_TO_DEADLINE', 0)
-                urg = "🔴" if days_left < 0 else "🟡" if days_left <= 2 else "🟢"
-                with st.expander(f"{urg} {task['TITLE']} | {days_left} días restantes"):
-                    c1, c2 = st.columns(2)
-                    c1.write(f"**Marca:** {task.get('BRAND_NAME', 'N/A')}")
-                    c1.write(f"**Solicitante:** {task.get('REQUESTER_NAME', 'N/A')}")
-                    c2.write(f"**Deadline:** {task['DEADLINE']}")
-                    c2.write(f"**Estado:** {task['STATUS']}")
-                    st.info(f"**Contexto y Objetivo:** {task['BUSINESS_CONTEXT']}")
-                    st.write(f"**📈 KPIs Esperados:** {task.get('EXPECTED_KPIS', 'N/A')}")
-                    st.write(f"**📅 Uso del Dato:** {task.get('DATA_USAGE', 'N/A')}")
-                    m1, m2, m3 = st.columns(3)
-                    m1.metric("Horas Totales", task.get('TOTAL_ESTIMATED_HOURS', 0))
-                    m2.metric("Horas Ejecutadas", task.get('HOURS_EXECUTED', 0))
-                    m3.metric("Horas Faltantes", task.get('HOURS_REMAINING', 0))
-                    with st.form(f"f_rev_{task['REQUEST_ID']}"):
-                        st.markdown("**Entregables para Revisión**")
-                        rev_links = st.text_input("Enlaces a documentos o Dashboards (Obligatorio)")
-                        rev_desc = st.text_area("Breve explicación de la tarea realizada (Obligatorio)")
-                        if st.form_submit_button("👀 Enviar a Revisión", use_container_width=True):
-                            if rev_links and rev_desc:
-                                new_ctx = str(task.get('BUSINESS_CONTEXT', '')) + f"\n\n[ENTREGADO PARA REVISIÓN]:\nEnlaces: {rev_links}\nExplicación: {rev_desc}"
-                                if update_row('REQUESTS', 'REQUEST_ID', task['REQUEST_ID'], {'STATUS': 'EN REVISIÓN', 'BUSINESS_CONTEXT': new_ctx, 'UPDATED_AT': str(datetime.now())}):
-                                    send_email_notification('datahublobueno@gmail.com', f"Tarea para Revisión: {task['TITLE']}", f"El usuario {user_name} ha marcado la tarea <b>{task['TITLE']}</b> como lista para revisión.<br><br><b>Enlaces:</b> {rev_links}<br><b>Explicación:</b> {rev_desc}<br><br>Revisa el dashboard de Synapse para validar y cerrar la solicitud de forma final.")
-                                    st.success("Tarea enviada a revisión correctamente.")
-                                    st.rerun()
-                            else:
-                                st.error("Debes incluir los enlaces y la explicación para enviar a revisión.")
+        my_tasks_base = get_my_assigned_tasks(user_email)
+        
+        if not my_tasks_base.empty:
+            with st.expander("🔍 Filtrar Mis Tareas", expanded=False):
+                c_f1, c_f2 = st.columns(2)
+                my_status = c_f1.multiselect("Estado", my_tasks_base['STATUS'].unique(), default=[])
+                my_search = c_f2.text_input("Buscar Tarea")
+                
+            my_tasks = my_tasks_base.copy()
+            if my_status: my_tasks = my_tasks[my_tasks['STATUS'].astype(str).str.upper().isin([s.upper() for s in my_status])]
+            if my_search:
+                q = my_search.lower()
+                my_tasks = my_tasks[my_tasks['TITLE'].str.lower().str.contains(q)]
+                
+            if not my_tasks.empty:
+                for _, task in my_tasks.iterrows():
+                    days_left = task.get('DAYS_TO_DEADLINE', 0)
+                    urg = "🔴" if days_left < 0 else "🟡" if days_left <= 2 else "🟢"
+                    with st.expander(f"{urg} {task['TITLE']} | {days_left} días restantes"):
+                        c1, c2 = st.columns(2)
+                        c1.write(f"**Marca:** {task.get('BRAND_NAME', 'N/A')}")
+                        c1.write(f"**Solicitante:** {task.get('REQUESTER_NAME', 'N/A')}")
+                        c2.write(f"**Deadline:** {task['DEADLINE']}")
+                        c2.write(f"**Estado:** {task['STATUS']}")
+                        st.info(f"**Contexto y Objetivo:** {task['BUSINESS_CONTEXT']}")
+                        st.write(f"**📈 KPIs Esperados:** {task.get('EXPECTED_KPIS', 'N/A')}")
+                        st.write(f"**📅 Uso del Dato:** {task.get('DATA_USAGE', 'N/A')}")
+                        m1, m2, m3 = st.columns(3)
+                        m1.metric("Horas Totales", task.get('TOTAL_ESTIMATED_HOURS', 0))
+                        m2.metric("Horas Ejecutadas", task.get('HOURS_EXECUTED', 0))
+                        m3.metric("Horas Faltantes", task.get('HOURS_REMAINING', 0))
+                        with st.form(f"f_rev_{task['REQUEST_ID']}"):
+                            st.markdown("**Entregables para Revisión**")
+                            rev_links = st.text_input("Enlaces a documentos o Dashboards (Obligatorio)")
+                            rev_desc = st.text_area("Breve explicación de la tarea realizada (Obligatorio)")
+                            if st.form_submit_button("👀 Enviar a Revisión", use_container_width=True):
+                                if rev_links and rev_desc:
+                                    new_ctx = str(task.get('BUSINESS_CONTEXT', '')) + f"\n\n[ENTREGADO PARA REVISIÓN]:\nEnlaces: {rev_links}\nExplicación: {rev_desc}"
+                                    if update_row('REQUESTS', 'REQUEST_ID', task['REQUEST_ID'], {'STATUS': 'EN REVISIÓN', 'BUSINESS_CONTEXT': new_ctx, 'UPDATED_AT': str(datetime.now())}):
+                                        send_email_notification('datahublobueno@gmail.com', f"Tarea para Revisión: {task['TITLE']}", f"El usuario {user_name} ha marcado la tarea <b>{task['TITLE']}</b> como lista para revisión.<br><br><b>Enlaces:</b> {rev_links}<br><b>Explicación:</b> {rev_desc}<br><br>Revisa el dashboard de Synapse para validar y cerrar la solicitud de forma final.")
+                                        st.success("Tarea enviada a revisión correctamente.")
+                                        st.rerun()
+                                else:
+                                    st.error("Debes incluir los enlaces y la explicación para enviar a revisión.")
+            else:
+                st.info("No hay tareas que coincidan con la búsqueda.")
         else:
             st.success("✅ No tienes tareas pendientes")
             
