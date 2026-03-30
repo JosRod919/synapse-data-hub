@@ -844,19 +844,33 @@ if is_ops(app_role):
     with tabs[4]:
         st.subheader("📋 Carga del Equipo")
         
+        all_reqs_eq = get_requests()
+        
         with st.expander("🔍 Filtros de Equipo", expanded=False):
             eq_c1, eq_c2 = st.columns(2)
             eq_week_opts = get_week_options(12)
             eq_wk_idx = eq_c1.selectbox("📅 Semana", range(len(eq_week_opts)), format_func=lambda x: eq_week_opts[x][1], key="eq_wk")
             eq_week = eq_week_opts[eq_wk_idx][0]
             eq_name_filter = eq_c2.text_input("🔎 Filtrar por Colaborador", key="eq_name")
+            
+            eq_c3, eq_c4 = st.columns(2)
+            eq_brand_list = all_reqs_eq['BRAND_NAME'].dropna().unique().tolist() if not all_reqs_eq.empty and 'BRAND_NAME' in all_reqs_eq.columns else []
+            eq_brand = eq_c3.multiselect("🏷️ Marca", sorted(eq_brand_list), default=[], key="eq_brand")
+            eq_status_list = all_reqs_eq['STATUS'].dropna().unique().tolist() if not all_reqs_eq.empty else []
+            eq_status = eq_c4.multiselect("📌 Estado de Tareas", eq_status_list, default=[], key="eq_status")
+        
+        # Filtrar tareas según marca y estado
+        filtered_reqs = all_reqs_eq.copy() if not all_reqs_eq.empty else pd.DataFrame()
+        if eq_brand and not filtered_reqs.empty and 'BRAND_NAME' in filtered_reqs.columns:
+            filtered_reqs = filtered_reqs[filtered_reqs['BRAND_NAME'].isin(eq_brand)]
+        if eq_status and not filtered_reqs.empty:
+            filtered_reqs = filtered_reqs[filtered_reqs['STATUS'].astype(str).str.upper().isin([s.upper() for s in eq_status])]
         
         wk_df = get_workload_by_week(eq_week)
         if eq_name_filter and not wk_df.empty:
             wk_df = wk_df[wk_df['FULL_NAME'].str.lower().str.contains(eq_name_filter.lower())]
         
         if not wk_df.empty:
-            all_reqs = get_requests()
             for _, r in wk_df.iterrows():
                 h_used = pd.to_numeric(r['HOURS_ASSIGNED'], errors='coerce')
                 h_used = int(h_used) if not pd.isna(h_used) else 0
@@ -865,10 +879,10 @@ if is_ops(app_role):
                 st.progress(pct)
                 
                 user_id = r['USER_ID']
-                if not all_reqs.empty:
-                    u_reqs = all_reqs[(all_reqs['ASSIGNED_TO'] == user_id) & (all_reqs['STATUS'].astype(str).str.upper() == 'EN PROGRESO')]
+                if not filtered_reqs.empty:
+                    u_reqs = filtered_reqs[(filtered_reqs['ASSIGNED_TO'] == user_id) & (filtered_reqs['STATUS'].astype(str).str.upper() != 'COMPLETADO')]
                     if not u_reqs.empty:
-                        with st.expander(f"Ver {len(u_reqs)} Tareas Activas y Progreso Esperado"):
+                        with st.expander(f"Ver {len(u_reqs)} Tareas de {r['FULL_NAME']}"):
                             for _, ur in u_reqs.iterrows():
                                 try:
                                     t_start = pd.to_datetime(ur.get('UPDATED_AT')).date()
@@ -878,13 +892,13 @@ if is_ops(app_role):
                                     t_pct = min(max(t_elap / t_days_tot, 0.0), 1.0)
                                 except:
                                     t_pct = 0.0
-                                st.markdown(f"🔹 **{ur['TITLE']}** (Entrega: {ur['DEADLINE']})")
+                                st.markdown(f"🔹 **{ur['TITLE']}** | {ur.get('BRAND_NAME','N/A')} | {ur['STATUS']} (Entrega: {ur['DEADLINE']})")
                                 st.progress(t_pct)
-                                st.caption(f"Avance esperado por desgaste de tiempo: {int(t_pct*100)}%")
+                                st.caption(f"Avance esperado: {int(t_pct*100)}%")
             show_eq_cols = [c for c in ['FULL_NAME', 'HOURS_MON', 'HOURS_TUE', 'HOURS_WED', 'HOURS_THU', 'HOURS_FRI', 'HOURS_ASSIGNED'] if c in wk_df.columns]
             st.dataframe(wk_df[show_eq_cols], hide_index=True)
         else:
-            st.info("No hay datos de carga para la semana y filtro seleccionados.")
+            st.info("No hay datos de carga para la semana y filtros seleccionados.")
             
     with tabs[5]:
         if is_admin(app_role):
