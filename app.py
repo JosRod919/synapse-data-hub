@@ -10,9 +10,12 @@ from sendgrid.helpers.mail import Mail, Email, To
 
 def send_email_notification(to_email, subject, body):
     try:
+        to_email = str(to_email).strip() if to_email else ''
+        if not to_email or to_email == 'nan' or '@' not in to_email:
+            st.warning(f"⚠️ Correo no enviado: destinatario inválido ('{to_email}')")
+            return False
         if "sendgrid" not in st.secrets:
             st.error("Error: Configuración de 'sendgrid' no encontrada en st.secrets.")
-            import time; time.sleep(3)
             return False
         sg = SendGridAPIClient(api_key=st.secrets["sendgrid"]["api_key"])
         from_email = Email(
@@ -21,15 +24,19 @@ def send_email_notification(to_email, subject, body):
         )
         message = Mail(
             from_email=from_email,
-            to_emails=To(str(to_email)),
+            to_emails=To(to_email),
             subject=str(subject),
             html_content=str(body)
         )
         response = sg.send(message)
-        return response.status_code in [200, 201, 202]
+        if response.status_code in [200, 201, 202]:
+            st.toast(f"✅ Correo enviado a {to_email}")
+            return True
+        else:
+            st.error(f"SendGrid respondió con código {response.status_code}")
+            return False
     except Exception as e:
-        st.error(f"Error enviando email (SendGrid): {str(e)}")
-        import time; time.sleep(3)
+        st.error(f"Error enviando email a {to_email}: {str(e)}")
         return False
 
 # --- CONFIGURACIÓN DE PÁGINA ---
@@ -596,12 +603,18 @@ if is_ops(app_role):
                 
                 f_search = cf4.text_input("Buscador de Texto (Tarea/Email)")
                 
+                cf5, cf6 = st.columns(2)
+                # Filtro por Marca
+                brand_list = df_base['BRAND_NAME'].dropna().unique().tolist() if 'BRAND_NAME' in df_base.columns else []
+                f_brand = cf5.multiselect("🏷️ Filtrar por Marca", sorted(brand_list), default=[])
+                
                 # Asignaciones Semanales Activas
                 wko = get_week_options(8)
-                f_week = st.selectbox("📅 Semanas Planeadas (Filtrar tareas asignadas esa semana)", ["Todas"] + [x[1] for x in wko])
+                f_week = cf6.selectbox("📅 Semanas Planeadas", ["Todas"] + [x[1] for x in wko])
                 
             df = df_base.copy()
             if f_status: df = df[df['STATUS'].astype(str).str.upper().isin([s.upper() for s in f_status])]
+            if f_brand and 'BRAND_NAME' in df.columns: df = df[df['BRAND_NAME'].isin(f_brand)]
             if f_search: 
                 q = f_search.lower()
                 df = df[df['TITLE'].str.lower().str.contains(q) | df['REQUESTER_NAME'].str.lower().str.contains(q)]
