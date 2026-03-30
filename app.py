@@ -473,8 +473,9 @@ else:
 
 def is_admin(r): return r.upper() in ['ADMIN', 'OWNER']
 def is_opts(r): return False # unused logic
-def is_ops(r): return r.upper() in ['ADMIN', 'OWNER', 'OPS', 'DATA ANALYST', 'DATA_ANALYST', 'RESEARCH EXECUTIVE', 'RESEARCH_EXECUTIVE', 'DATA LEAD', 'DATA_LEAD']
+def is_ops(r): return r.upper() in ['ADMIN', 'OWNER', 'OPS', 'DATA STRATEGIST', 'DATA_STRATEGIST', 'DATA ANALYST', 'DATA_ANALYST', 'RESEARCH EXECUTIVE', 'RESEARCH_EXECUTIVE', 'DATA LEAD', 'DATA_LEAD']
 def is_owner(r): return r.upper() == 'OWNER'
+def is_strategist_or_admin(r): return r.upper() in ['ADMIN', 'OWNER', 'DATA STRATEGIST', 'DATA_STRATEGIST']
 
 with st.sidebar:
     # Logo Principal UI en el Sidebar
@@ -595,58 +596,61 @@ if is_ops(app_role):
                     m2.metric("Horas Ejecutadas", req_data.get('HOURS_EXECUTED', 0))
                     m3.metric("Horas Faltantes", req_data.get('HOURS_REMAINING', 0))
 
-                c1, c2 = st.columns(2)
-                with c1:
-                    with st.form(f"ask_info_{req_idx}"):
-                        st.markdown("**1. Solicitar Aclaración al Creador**")
-                        fb = st.text_area("¿Qué información hace falta?", key="fbk")
-                        if st.form_submit_button("Pedir Información al Creador", use_container_width=True):
-                            if fb:
-                                update_row('REQUESTS', 'REQUEST_ID', req_idx, {'STATUS': 'ESPERANDO INFO', 'ADMIN_FEEDBACK': fb, 'UPDATED_AT': str(datetime.now())})
+                if is_strategist_or_admin(app_role):
+                    c1, c2 = st.columns(2)
+                    with c1:
+                        with st.form(f"ask_info_{req_idx}"):
+                            st.markdown("**1. Solicitar Aclaración al Creador**")
+                            fb = st.text_area("¿Qué información hace falta?", key="fbk")
+                            if st.form_submit_button("Pedir Información al Creador", use_container_width=True):
+                                if fb:
+                                    update_row('REQUESTS', 'REQUEST_ID', req_idx, {'STATUS': 'ESPERANDO INFO', 'ADMIN_FEEDBACK': fb, 'UPDATED_AT': str(datetime.now())})
+                                    e_target = req_data.get('REQUESTER_EMAIL', '')
+                                    if pd.isna(e_target): e_target = ''
+                                    send_email_notification(e_target, f"Acción Requerida: {req_data['TITLE']}", f"El equipo de Datos requiere más detalles para avanzar con tu solicitud <b>{req_data['TITLE']}</b>.<br><br><b>Mensaje de Ops:</b> {fb}<br><br>Por favor, ingresa a la pestaña 'Mis Solicitudes' en Synapse para responder.")
+                                    st.success("Aclaración solicitada con éxito.")
+                                    st.rerun()
+                    with c2:
+                        with st.form(f"resched_{req_idx}"):
+                            st.markdown("**2. Reprogramar Fecha de Entrega**")
+                            try: prev_date = datetime.strptime(str(req_data['DEADLINE']), "%Y-%m-%d").date()
+                            except: prev_date = date.today()
+                            new_date = st.date_input("Nueva Fecha Oficial", value=prev_date, key="ndate")
+                            if st.form_submit_button("Actualizar Fecha de Entrega", use_container_width=True):
+                                if str(new_date) != str(prev_date):
+                                    update_row('REQUESTS', 'REQUEST_ID', req_idx, {'DEADLINE': str(new_date), 'UPDATED_AT': str(datetime.now())})
+                                    e_target = req_data.get('REQUESTER_EMAIL', '')
+                                    if pd.isna(e_target): e_target = ''
+                                    send_email_notification(e_target, f"Fecha Reprogramada: {req_data['TITLE']}", f"Te informamos que la fecha de entrega oficial de <b>{req_data['TITLE']}</b> ha sido reestimada al <b>{new_date}</b>.")
+                                    st.success("Fecha y SLA actualizados.")
+                                    st.rerun()
+                                    
+                    with st.form(f"rework_{req_idx}"):
+                        st.markdown("**3. Registrar Reproceso (Adición de Horas)**")
+                        rw_cause = st.text_area("Causa del Reproceso", key="rwcause")
+                        rw_hours = st.number_input("Horas a Adicionar", value=0.0, step=0.5, key="rwhours")
+                        if st.form_submit_button("Registrar Reproceso", use_container_width=True):
+                            if rw_cause and rw_hours > 0:
+                                new_ctx = str(req_data.get('BUSINESS_CONTEXT', '')) + f"\n\n[REPROCESO {datetime.now().strftime('%Y-%m-%d')}]: {rw_cause} (+{rw_hours}h)"
+                                new_total = float(req_data.get('TOTAL_ESTIMATED_HOURS', 0)) + float(rw_hours)
+                                update_row('REQUESTS', 'REQUEST_ID', req_idx, {'BUSINESS_CONTEXT': new_ctx, 'TOTAL_ESTIMATED_HOURS': new_total, 'UPDATED_AT': str(datetime.now())})
                                 e_target = req_data.get('REQUESTER_EMAIL', '')
                                 if pd.isna(e_target): e_target = ''
-                                send_email_notification(e_target, f"Acción Requerida: {req_data['TITLE']}", f"El equipo de Datos requiere más detalles para avanzar con tu solicitud <b>{req_data['TITLE']}</b>.<br><br><b>Mensaje de Ops:</b> {fb}<br><br>Por favor, ingresa a la pestaña 'Mis Solicitudes' en Synapse para responder.")
-                                st.success("Aclaración solicitada con éxito.")
+                                send_email_notification(e_target, f"Actualización de Alcance: {req_data['TITLE']}", f"Se ha registrado un reproceso en tu solicitud <b>{req_data['TITLE']}</b>.<br><br><b>Causa:</b> {rw_cause}<br>Horas adicionadas al estimado: {rw_hours}h.")
+                                st.success("Reproceso registrado correctamente.")
                                 st.rerun()
-                with c2:
-                    with st.form(f"resched_{req_idx}"):
-                        st.markdown("**2. Reprogramar Fecha de Entrega**")
-                        try: prev_date = datetime.strptime(str(req_data['DEADLINE']), "%Y-%m-%d").date()
-                        except: prev_date = date.today()
-                        new_date = st.date_input("Nueva Fecha Oficial", value=prev_date, key="ndate")
-                        if st.form_submit_button("Actualizar Fecha de Entrega", use_container_width=True):
-                            if str(new_date) != str(prev_date):
-                                update_row('REQUESTS', 'REQUEST_ID', req_idx, {'DEADLINE': str(new_date), 'UPDATED_AT': str(datetime.now())})
-                                e_target = req_data.get('REQUESTER_EMAIL', '')
-                                if pd.isna(e_target): e_target = ''
-                                send_email_notification(e_target, f"Fecha Reprogramada: {req_data['TITLE']}", f"Te informamos que la fecha de entrega oficial de <b>{req_data['TITLE']}</b> ha sido reestimada al <b>{new_date}</b>.")
-                                st.success("Fecha y SLA actualizados.")
-                                st.rerun()
-                                
-                with st.form(f"rework_{req_idx}"):
-                    st.markdown("**3. Registrar Reproceso (Adición de Horas)**")
-                    rw_cause = st.text_area("Causa del Reproceso", key="rwcause")
-                    rw_hours = st.number_input("Horas a Adicionar", value=0.0, step=0.5, key="rwhours")
-                    if st.form_submit_button("Registrar Reproceso", use_container_width=True):
-                        if rw_cause and rw_hours > 0:
-                            new_ctx = str(req_data.get('BUSINESS_CONTEXT', '')) + f"\n\n[REPROCESO {datetime.now().strftime('%Y-%m-%d')}]: {rw_cause} (+{rw_hours}h)"
-                            new_total = float(req_data.get('TOTAL_ESTIMATED_HOURS', 0)) + float(rw_hours)
-                            update_row('REQUESTS', 'REQUEST_ID', req_idx, {'BUSINESS_CONTEXT': new_ctx, 'TOTAL_ESTIMATED_HOURS': new_total, 'UPDATED_AT': str(datetime.now())})
+    
+                    st.divider()
+                    st.markdown("**4. Cierre de Solicitud (Finalización)**")
+                    if st.button("🏁 Marcar Solicitud como COMPLETADA", type="primary", use_container_width=True):
+                        if update_row('REQUESTS', 'REQUEST_ID', req_idx, {'STATUS': 'COMPLETADO', 'UPDATED_AT': str(datetime.now())}):
                             e_target = req_data.get('REQUESTER_EMAIL', '')
                             if pd.isna(e_target): e_target = ''
-                            send_email_notification(e_target, f"Actualización de Alcance: {req_data['TITLE']}", f"Se ha registrado un reproceso en tu solicitud <b>{req_data['TITLE']}</b>.<br><br><b>Causa:</b> {rw_cause}<br>Horas adicionadas al estimado: {rw_hours}h.")
-                            st.success("Reproceso registrado correctamente.")
+                            send_email_notification(e_target, f"Solicitud Completada: {req_data['TITLE']}", f"¡Buenas noticias!<br>Tu solicitud <b>{req_data['TITLE']}</b> ha sido finalizada con éxito por el equipo de Datos.<br><br>Gracias por utilizar Synapse.")
+                            st.success("Tarea cerrada de forma definitiva.")
                             st.rerun()
-
-                st.divider()
-                st.markdown("**4. Cierre de Solicitud (Finalización)**")
-                if st.button("🏁 Marcar Solicitud como COMPLETADA", type="primary", use_container_width=True):
-                    if update_row('REQUESTS', 'REQUEST_ID', req_idx, {'STATUS': 'COMPLETADO', 'UPDATED_AT': str(datetime.now())}):
-                        e_target = req_data.get('REQUESTER_EMAIL', '')
-                        if pd.isna(e_target): e_target = ''
-                        send_email_notification(e_target, f"Solicitud Completada: {req_data['TITLE']}", f"¡Buenas noticias!<br>Tu solicitud <b>{req_data['TITLE']}</b> ha sido finalizada con éxito por el equipo de Datos.<br><br>Gracias por utilizar Synapse.")
-                        st.success("Tarea cerrada de forma definitiva.")
-                        st.rerun()
+                else:
+                    st.warning("🔒 Tu rol actual no tiene permisos para Gestionar, Revisar o Finalizar esta solicitud. Debe hacerlo un Data Strategist o Administrador.")
         else:
             st.info("No hay solicitudes registradas.")
             
@@ -726,16 +730,20 @@ if is_ops(app_role):
                     'HOURS_FRI': d5.number_input("V", 0, 8, 0)
                 }
                 
-                if st.form_submit_button("✅ Asignar y Notificar", use_container_width=True):
-                    req_id = int(tgt_req.split(" - ")[0])
-                    u_id = int(team_df[team_df['FULL_NAME'] == tgt_usr]['USER_ID'].iloc[0])
-                    update_row('REQUESTS', 'REQUEST_ID', req_id, {'STATUS': 'EN PROGRESO', 'ASSIGNED_TO': u_id, 'UPDATED_AT': str(datetime.now())})
-                    if add_weekly_assignment(req_id, u_id, sel_week, hrs, user_email, nts, hw):
-                        usr_email = team_df[team_df['FULL_NAME'] == tgt_usr]['EMAIL'].iloc[0]
-                        send_email_notification(usr_email, f"Nueva Asignación: {r_data['TITLE']}", f"Hola {tgt_usr},<br><br>Se te ha asignado la tarea <b>{r_data['TITLE']}</b> (Deadline: {r_data['DEADLINE']}).<br>Horas asignadas esta semana: {hrs}h.<br><br><b>Contexto:</b> {r_data.get('BUSINESS_CONTEXT', '')}<br><br>Revisa tu pestaña 'Mis Tareas' en Synapse.")
-                        send_email_notification(r_data.get('REQUESTER_EMAIL', ''), f"Tarea Asignada: {r_data['TITLE']}", f"Tu solicitud <b>{r_data['TITLE']}</b> ha sido aprobada y asignada.<br><br><b>Asignado a:</b> {tgt_usr}<br><b>Fecha de Entrega Oficial:</b> {r_data['DEADLINE']}<br><br>Se encuentra formalmente EN PROGRESO.")
-                        st.success("Asignación guardada y notificada a los involucrados.")
-                        st.rerun()
+                if is_strategist_or_admin(app_role):
+                    if st.form_submit_button("✅ Asignar y Notificar", use_container_width=True):
+                        req_id = int(tgt_req.split(" - ")[0])
+                        u_id = int(team_df[team_df['FULL_NAME'] == tgt_usr]['USER_ID'].iloc[0])
+                        update_row('REQUESTS', 'REQUEST_ID', req_id, {'STATUS': 'EN PROGRESO', 'ASSIGNED_TO': u_id, 'UPDATED_AT': str(datetime.now())})
+                        if add_weekly_assignment(req_id, u_id, sel_week, hrs, user_email, nts, hw):
+                            usr_email = team_df[team_df['FULL_NAME'] == tgt_usr]['EMAIL'].iloc[0]
+                            send_email_notification(usr_email, f"Nueva Asignación: {r_data['TITLE']}", f"Hola {tgt_usr},<br><br>Se te ha asignado la tarea <b>{r_data['TITLE']}</b> (Deadline: {r_data['DEADLINE']}).<br>Horas asignadas esta semana: {hrs}h.<br><br><b>Contexto:</b> {r_data.get('BUSINESS_CONTEXT', '')}<br><br>Revisa tu pestaña 'Mis Tareas' en Synapse.")
+                            send_email_notification(r_data.get('REQUESTER_EMAIL', ''), f"Tarea Asignada: {r_data['TITLE']}", f"Tu solicitud <b>{r_data['TITLE']}</b> ha sido aprobada y asignada.<br><br><b>Asignado a:</b> {tgt_usr}<br><b>Fecha de Entrega Oficial:</b> {r_data['DEADLINE']}<br><br>Se encuentra formalmente EN PROGRESO.")
+                            st.success("Asignación guardada y notificada a los involucrados.")
+                            st.rerun()
+                else:
+                    st.form_submit_button("✅ Asignar y Notificar", use_container_width=True, disabled=True)
+                    st.warning("🔒 Solo un Data Strategist o Administrador puede asignar tareas a este equipo.")
         else:
             st.info("No hay tareas pendientes por asignar.")
 
