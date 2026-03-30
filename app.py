@@ -590,7 +590,7 @@ if is_ops(app_role):
                             _dates = pd.to_datetime(df_base[df_base[f_date_col].notnull()][f_date_col]).dt.date
                             min_d, max_d = _dates.min(), _dates.max()
                         except: min_d, max_d = date.today(), date.today()
-                        f_date_range = cf3.date_input("Rango", [min_d, max_d], value=[])
+                        f_date_range = cf3.date_input("Rango", value=[min_d, max_d])
                     else: f_date_range = []
                 else: f_date_range = []
                 
