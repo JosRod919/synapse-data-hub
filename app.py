@@ -15,7 +15,7 @@ def send_email_notification(to_email, subject, body):
             return False
         sg = SendGridAPIClient(api_key=st.secrets["sendgrid"]["api_key"])
         from_email = Email(
-            st.secrets["sendgrid"]["from_email"],
+            "datahublobueno@gmail.com",
             st.secrets["sendgrid"].get("from_name", "Synapse Data Hub")
         )
         message = Mail(
@@ -35,13 +35,13 @@ def send_email_notification(to_email, subject, body):
 st.set_page_config(page_title="Synapse | Data Ops", page_icon="⚡", layout="wide")
 
 CATEGORIAS_DATA = [
-    "📈 Reporting & Performance",
-    "🕵️ Competitive Intelligence",
-    "⚙️ Data Engineering & Governance",
-    "📊 Dashboarding & Visualization",
-    "🔍 Strategic Research & Audiences",
-    "⚡ Ad-Hoc Analysis",
-    "🤖 Innovation & Training (IA)"
+    "📈 Reportes y Rendimiento",
+    "🕵️ Inteligencia Competitiva",
+    "⚙️ Ingeniería y Gobierno de Datos",
+    "📊 Dashboards y Visualización",
+    "🔍 Investigación Estratégica y Audiencias",
+    "⚡ Análisis Ad-Hoc",
+    "🤖 Innovación y Entrenamiento (IA)"
 ]
 
 # --- CONFIGURACIÓN DE NIVEL DE SERVICIO (SLA ANTIGRAVITY) ---
@@ -94,8 +94,9 @@ st.markdown("""
     div[data-testid="stTabs"] button {
         font-size: 1.1rem; border-radius: 4px; padding: 10px 20px; transition: all 0.3s ease;
     }
-    div[data-testid="stTabs"] button[aria-selected="true"] { color: #f97316 !important; }
-    div[data-testid="stTabs"] button[aria-selected="true"] > div { background-color: #f97316 !important; }
+    div[data-testid="stTabs"] button[aria-selected="true"] { color: white !important; background-color: #f97316 !important; }
+    div[data-testid="stTabs"] button[aria-selected="true"] > div { background-color: transparent !important; }
+    div[data-testid="stTabs"] button[aria-selected="true"] p { color: white !important; font-weight: bold !important; }
     div[data-testid="metric-container"] {
         border-radius: 12px; padding: 15px;
         box-shadow: 0 4px 6px rgba(0, 0, 0, 0.1); border: 1px solid rgba(128, 128, 128, 0.2);
@@ -450,8 +451,10 @@ if not users_df.empty:
 else:
     app_role, user_name = 'VIEWER', user_email
 
-def is_admin(r): return r.upper() == 'ADMIN'
-def is_ops(r): return r.upper() in ['ADMIN', 'OPS', 'DATA ANALYST', 'DATA_ANALYST', 'RESEARCH EXECUTIVE', 'RESEARCH_EXECUTIVE', 'DATA LEAD', 'DATA_LEAD']
+def is_admin(r): return r.upper() in ['ADMIN', 'OWNER']
+def is_opts(r): return False # unused logic
+def is_ops(r): return r.upper() in ['ADMIN', 'OWNER', 'OPS', 'DATA ANALYST', 'DATA_ANALYST', 'RESEARCH EXECUTIVE', 'RESEARCH_EXECUTIVE', 'DATA LEAD', 'DATA_LEAD']
+def is_owner(r): return r.upper() == 'OWNER'
 
 with st.sidebar:
     st.markdown(f"### 👤 {user_name}")
@@ -471,29 +474,29 @@ if is_ops(app_role):
         st.subheader("Crear Nueva Solicitud")
         col1, col2 = st.columns(2)
         with col1:
-            req_type = st.selectbox("Tipo de Tarea Genérica", CATEGORIAS_DATA, key="o_type")
-            title = st.text_input("Detalle de la tarea (ej: Informe Terpel Julio) *", key="o_tit")
+            req_type = st.selectbox("Tipo de Tarea Genérica", CATEGORIAS_DATA, key="o_type", help="Selecciona la categoría que mejor describa la tarea. Ej: Si buscas analizar un reporte mensual, elige 'Reportes y Rendimiento'.")
+            title = st.text_input("Detalle de la tarea (ej: Informe Terpel Julio) *", key="o_tit", help="Un nombre corto y descriptivo para la solicitud. Ej: 'Análisis de Redes Sociales de Marca X'.")
             b_df = get_brands()
-            brand = st.selectbox("Marca", ["Seleccionar..."] + b_df['BRAND_NAME'].tolist() if not b_df.empty else ["Sin marcas"], key="o_brnd")
+            brand = st.selectbox("Marca", ["Seleccionar..."] + b_df['BRAND_NAME'].tolist() if not b_df.empty else ["Sin marcas"], key="o_brnd", help="La marca a la que pertenece esta solicitud. Ej: 'Honda'.")
         with col2:
             sla_options = {k: v["label"] for k, v in SLA_MAPPING.items()}
-            sla_level = st.selectbox("Nivel de Servicio (SLA)", options=list(sla_options.keys()), format_func=lambda x: sla_options[x], index=1, key="o_sla")
+            sla_level = st.selectbox("Nivel de Servicio (SLA)", options=list(sla_options.keys()), format_func=lambda x: sla_options[x], index=1, key="o_sla", help="El nivel de urgencia/complejidad. Ej: Nivel 1 es para dudas rápidas, Nivel 4 para informes complejos.")
             
             calculated_deadline = calcular_entrega_antigravity(sla_level).date()
             calculated_hours = SLA_MAPPING[sla_level]["horas"]
             
             if is_admin(app_role):
-                deadline = st.date_input("Fecha límite (Override Admin)", value=calculated_deadline)
-                est_hrs = st.number_input("Horas estimadas (Total)", value=float(calculated_hours))
+                deadline = st.date_input("Fecha límite (Override Admin)", value=calculated_deadline, help="Fecha oficial de entrega. Como admin, puedes forzar esta fecha.")
+                est_hrs = st.number_input("Horas estimadas (Total)", value=float(calculated_hours), help="Horas de esfuerzo estimado para completar la tarea.")
             else:
                 st.info(f"⏱️ **Basado en la complejidad de Nivel {sla_level}, tu entrega estimada es el {calculated_deadline.strftime('%d/%m/%Y')} (Esfuerzo: {calculated_hours} horas).**")
                 deadline = calculated_deadline
                 est_hrs = calculated_hours
         
         st.divider()
-        context = st.text_area("Contexto y Objetivo *", key="o_ctx")
-        kpis = st.text_area("KPIs esperados *", key="o_kpi")
-        usage = st.text_area("Uso del Dato *", key="o_use")
+        context = st.text_area("Contexto y Objetivo *", key="o_ctx", help="¿Cuál es el problema de negocio a resolver? Ej: 'Necesitamos entender por qué las ventas cayeron en la categoría de calzado.'")
+        kpis = st.text_area("KPIs esperados *", key="o_kpi", help="Métricas que el entregable debe contener. Ej: 'Volumen de ventas, Costo de adquisición (CAC), Conversión (%)'.")
+        usage = st.text_area("Uso del Dato *", key="o_use", help="¿Para qué se usará esta información? Ej: 'Para la presentación de resultados al cliente el próximo miércoles.'")
         
         if st.button("✅ Enviar Solicitud", type="primary", use_container_width=True, key="o_btn"):
             if not all([title, context, kpis, usage]) or brand == "Seleccionar...":
@@ -766,33 +769,36 @@ if is_ops(app_role):
                 if not u_df.empty: st.dataframe(u_df, hide_index=True)
                 with st.form("new_user"):
                     c1, c2 = st.columns(2)
-                    em = c1.text_input("Email")
-                    fn = c2.text_input("Nombre Completo")
-                    rol = st.selectbox("Rol", ["VIEWER", "OPS", "ADMIN", "DATA ANALYST", "RESEARCH EXECUTIVE"])
+                    em = c1.text_input("Email", help="Correo electrónico del usuario")
+                    fn = c2.text_input("Nombre Completo", help="Nombre y apellido")
+                    rol = st.selectbox("Rol", ["VIEWER", "OPS", "ADMIN", "OWNER", "DATA ANALYST", "RESEARCH EXECUTIVE"])
                     pos = st.selectbox("Posición", ["DATA_LEAD", "DATA_STRATEGIST", "DATA_ANALYST", "RESEARCH_EXECUTIVE", "DATA_RESEARCH", "DATA_OPS", "EXTERNAL"])
                     if st.form_submit_button("➕ Agregar Usuario"):
                         if em and fn:
                             save_row('USERS', {'USER_ID': generate_id('USERS', 'USER_ID'), 'EMAIL': em, 'FULL_NAME': fn, 'ROLE': rol, 'POSITION': pos, 'IS_ACTIVE': 'TRUE', 'WEEKLY_HOURS': 40})
                             st.success("Usuario agregado")
             with t3:
-                st.subheader("🗑️ Eliminar Tareas / Solicitudes")
-                req_df = get_requests()
-                if not req_df.empty:
-                    req_to_del_str = st.selectbox("Selecciona Solicitud para ELIMINAR", 
-                                               req_df.apply(lambda x: f"{x['REQUEST_ID']} - {x['TITLE']} ({x['BRAND_NAME']})", axis=1))
-                    req_id_to_del = int(req_to_del_str.split(" - ")[0])
-                    
-                    st.warning(f"⚠️ Estás a punto de eliminar permanentemente la tarea: **{req_to_del_str}**")
-                    confirm_task = st.checkbox("Confirmo que deseo ELIMINAR esta tarea definitivamente")
-                    if st.button("🗑️ Eliminar Tarea Permanentemente", type="primary"):
-                        if confirm_task:
-                            if delete_row('REQUESTS', 'REQUEST_ID', req_id_to_del):
-                                st.success("Tarea eliminada correctamente")
-                                st.rerun()
-                        else:
-                            st.error("Debes confirmar la eliminación")
+                if is_owner(app_role):
+                    st.subheader("🗑️ Eliminar Tareas / Solicitudes")
+                    req_df = get_requests()
+                    if not req_df.empty:
+                        req_to_del_str = st.selectbox("Selecciona Solicitud para ELIMINAR", 
+                                                   req_df.apply(lambda x: f"{x['REQUEST_ID']} - {x['TITLE']} ({x['BRAND_NAME']})", axis=1))
+                        req_id_to_del = int(req_to_del_str.split(" - ")[0])
+                        
+                        st.warning(f"⚠️ Estás a punto de eliminar permanentemente la tarea: **{req_to_del_str}**")
+                        confirm_task = st.checkbox("Confirmo que deseo ELIMINAR esta tarea definitivamente")
+                        if st.button("🗑️ Eliminar Tarea Permanentemente", type="primary"):
+                            if confirm_task:
+                                if delete_row('REQUESTS', 'REQUEST_ID', req_id_to_del):
+                                    st.success("Tarea eliminada correctamente")
+                                    st.rerun()
+                            else:
+                                st.error("Debes confirmar la eliminación")
+                    else:
+                        st.info("No hay tareas para eliminar")
                 else:
-                    st.info("No hay tareas para eliminar")
+                    st.warning("Acceso denegado. Solo el rol OWNER puede eliminar tareas.")
         else:
             st.warning("Acceso restringido a administradores.")
 else:
@@ -802,13 +808,13 @@ else:
         st.subheader("Crear Nueva Solicitud")
         col1, col2 = st.columns(2)
         with col1:
-            req_type = st.selectbox("Tipo de Tarea Genérica", CATEGORIAS_DATA, key="v_type")
-            title = st.text_input("Detalle de la tarea (ej: Informe Terpel Julio) *", key="v_tit")
+            req_type = st.selectbox("Tipo de Tarea Genérica", CATEGORIAS_DATA, key="v_type", help="Selecciona la categoría que mejor describa la tarea. Ej: Si buscas analizar un reporte mensual, elige 'Reportes y Rendimiento'.")
+            title = st.text_input("Detalle de la tarea (ej: Informe Terpel Julio) *", key="v_tit", help="Un nombre corto y descriptivo para la solicitud. Ej: 'Análisis de Redes Sociales de Marca X'.")
             b_df = get_brands()
-            brand = st.selectbox("Marca", ["Seleccionar..."] + b_df['BRAND_NAME'].tolist() if not b_df.empty else ["Sin marcas"], key="v_brd")
+            brand = st.selectbox("Marca", ["Seleccionar..."] + b_df['BRAND_NAME'].tolist() if not b_df.empty else ["Sin marcas"], key="v_brd", help="La marca a la que pertenece esta solicitud. Ej: 'Honda'.")
         with col2:
             sla_options = {k: v["label"] for k, v in SLA_MAPPING.items()}
-            sla_level = st.selectbox("Nivel de Servicio (SLA)", options=list(sla_options.keys()), format_func=lambda x: sla_options[x], index=1, key="v_sla")
+            sla_level = st.selectbox("Nivel de Servicio (SLA)", options=list(sla_options.keys()), format_func=lambda x: sla_options[x], index=1, key="v_sla", help="El nivel de urgencia/complejidad. Ej: Nivel 1 es para dudas rápidas, Nivel 4 para informes complejos.")
             
             calculated_deadline = calcular_entrega_antigravity(sla_level).date()
             calculated_hours = SLA_MAPPING[sla_level]["horas"]
@@ -816,9 +822,9 @@ else:
             deadline = calculated_deadline
             
         st.divider()
-        context = st.text_area("Contexto y Objetivo *", key="v_ctx")
-        kpis = st.text_area("KPIs esperados *", key="v_kpi")
-        usage = st.text_area("Uso del Dato *", key="v_use")
+        context = st.text_area("Contexto y Objetivo *", key="v_ctx", help="¿Cuál es el problema de negocio a resolver? Ej: 'Necesitamos entender por qué las ventas cayeron en la categoría de calzado.'")
+        kpis = st.text_area("KPIs esperados *", key="v_kpi", help="Métricas que el entregable debe contener. Ej: 'Volumen de ventas, Costo de adquisición (CAC), Conversión (%)'.")
+        usage = st.text_area("Uso del Dato *", key="v_use", help="¿Para qué se usará esta información? Ej: 'Para la presentación de resultados al cliente el próximo miércoles.'")
         
         if st.button("✅ Enviar Solicitud", type="primary", use_container_width=True, key="v_btn"):
             if not all([title, context, kpis, usage]) or brand == "Seleccionar...":
