@@ -102,8 +102,6 @@ st.markdown("""
         box-shadow: 0 4px 6px rgba(0, 0, 0, 0.1); border: 1px solid rgba(128, 128, 128, 0.2);
     }
     .streamlit-expanderHeader { border-radius: 8px; border: 1px solid rgba(128, 128, 128, 0.2); }
-    [data-testid="stHeader"] { background-color: #1a1a1a !important; }
-    [data-testid="stAppViewContainer"] { background-color: #0e1117; } /* Fija fondo oscuro principal por defecto */
 </style>
 """, unsafe_allow_html=True)
 
@@ -423,10 +421,28 @@ def mark_task_complete(request_id):
     })
 
 # --- SESIÓN DE USUARIO (LOGIN) ---
+
+import base64
+import os
+
+def render_logo(width=350):
+    if os.path.exists("assets/new_logo.png"):
+        with open("assets/new_logo.png", "rb") as f:
+            encoded = base64.b64encode(f.read()).decode()
+        st.markdown(
+            f'''
+            <div style="background-color: #111111; padding: 15px; border-radius: 12px; text-align: center; margin-bottom: 25px;">
+                <img src="data:image/png;base64,{encoded}" style="max-width: {width}px; width: 100%; height: auto;">
+            </div>
+            ''',
+            unsafe_allow_html=True
+        )
+    else:
+        st.title("Synapse")
+
 if "user_email" not in st.session_state:
     # Logo
-    try: st.logo("assets/new_logo.png")
-    except: st.image("assets/new_logo.png", width=280)
+    render_logo(width=400)
     
     c1, c2, c3 = st.columns([1,2,1])
     with c2:
@@ -461,15 +477,29 @@ def is_ops(r): return r.upper() in ['ADMIN', 'OWNER', 'OPS', 'DATA ANALYST', 'DA
 def is_owner(r): return r.upper() == 'OWNER'
 
 with st.sidebar:
+    # Logo Principal UI en el Sidebar
+    render_logo(width=300)
+    
     st.markdown(f"### 👤 {user_name}")
     st.markdown(f"**Rol:** `{app_role}`")
+    
+    import os
+    if os.path.exists("workflow_synapse.md"):
+        st.divider()
+        with open("workflow_synapse.md", "r", encoding="utf-8") as f:
+            st.download_button(
+                label="📄 Descargar Manual App",
+                data=f.read(),
+                file_name="Manual_Procesos_Synapse.md",
+                mime="text/markdown",
+                use_container_width=True
+            )
+            
+    st.divider()
+    
     if st.button("🚪 Cerrar Sesión", use_container_width=True):
         del st.session_state.user_email
         st.rerun()
-
-# Logo Principal UI
-try: st.logo("assets/new_logo.png")
-except: st.image("assets/new_logo.png", width=280)
 
 # --- UI PRINCIPAL ---
 if is_ops(app_role):
